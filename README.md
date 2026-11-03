@@ -218,10 +218,16 @@ You need Node 18 or newer and a free project at [supabase.com](https://supabase.
 
 1. Create a project in the Supabase dashboard. Its ref is in the URL:
    `supabase.com/dashboard/project/<project-ref>`.
-2. From this folder, run:
+2. From this folder, run the setup for your system:
 
    ```bash
    ./scripts/cloud-setup.sh <project-ref>
+   ```
+
+   On Windows, in PowerShell:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\cloud-setup.ps1 <project-ref>
    ```
 
    It signs you in to Supabase (a browser opens the first time), links the folder, applies the
@@ -245,9 +251,9 @@ added again.
 
 **Day to day:** changes in `web/` show up in the browser as you save. Changes to
 `supabase/functions/` or new files in `supabase/migrations/` reach the cloud project when you run
-`./scripts/cloud-setup.sh <project-ref>` again.
+the setup script again.
 
-On Windows, run the scripts in Git Bash or WSL.
+On Windows, use `cloud-setup.ps1` in PowerShell (or `cloud-setup.sh` in Git Bash). `npm run dev` checks first that the packages are installed and the project is set up, and says what to run if not.
 
 ## Optional: run everything locally
 
