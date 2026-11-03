@@ -24,9 +24,16 @@ function Supabase {
   if ($LASTEXITCODE -ne 0) { throw "supabase $($args -join ' ') failed (exit $LASTEXITCODE). See the message above." }
 }
 
-Write-Host "1/5 Signing in to Supabase (opens a browser the first time)..."
+Write-Host "1/5 Checking you're signed in to Supabase (the first run downloads the Supabase CLI; this can take a minute)..."
 & npx -y supabase@2 projects list *> $null
-if ($LASTEXITCODE -ne 0) { Supabase login }
+if ($LASTEXITCODE -ne 0) {
+  Write-Host ""
+  Write-Host "    You're not signed in yet. When asked, press Enter to open the browser and sign in."
+  Write-Host "    No browser? Stop with Ctrl+C, create a token at https://supabase.com/dashboard/account/tokens,"
+  Write-Host "    run: npx -y supabase@2 login --token <your-token>   then run this script again."
+  Write-Host ""
+  Supabase login
+}
 
 Write-Host "2/5 Linking this folder to project $Ref..."
 Supabase link --project-ref $Ref

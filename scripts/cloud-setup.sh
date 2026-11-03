@@ -19,8 +19,15 @@ if [ -z "$REF" ]; then
 fi
 SB="npx -y supabase@2"
 
-echo "1/5 Signing in to Supabase (opens a browser the first time)…"
-$SB projects list >/dev/null 2>&1 || $SB login
+echo "1/5 Checking you're signed in to Supabase (the first run downloads the Supabase CLI; this can take a minute)…"
+if ! $SB projects list >/dev/null 2>&1; then
+  echo
+  echo "    You're not signed in yet. When asked, press Enter to open the browser and sign in."
+  echo "    No browser? Stop with Ctrl+C, create a token at https://supabase.com/dashboard/account/tokens,"
+  echo "    run: npx -y supabase@2 login --token <your-token>   then run this script again."
+  echo
+  $SB login
+fi
 
 echo "2/5 Linking this folder to project $REF…"
 $SB link --project-ref "$REF"
