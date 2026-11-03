@@ -1,0 +1,273 @@
+import { useEffect, useState } from "react";
+import { errorMessage, supabase } from "../lib/supabase";
+import { must, useLoad } from "../lib/useLoad";
+import type { Analysis, Contract, Piece, Section, ThreadMessage } from "../lib/types";
+import { CardForm, emptyCard } from "./CardForm";
+import { AiAction, ErrorText, Loading, Modal } from "./ui";
+import { SeoGeoPanel } from "./SeoGeoPanel";
+import { normalise } from "../lib/recipes";
+
+interface Draft {
+  key: string;
+  heading: string;
+  purpose: string;
+  expectation_ids: string[];
+}
+
+const key = () => Math.random().toString(36).slice(2, 9);
+
+/** Analysis of the reviewed research, then the outline (writer-owned, AI-suggested). */
+export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; onAdvanced: () => void; onChanged: () => void }) {
+  const { data, error, reload, setData } = useLoad(async () => {
+    const [contract, sections, thread] = await Promise.all([
+      supabase.from("piece_contracts").select("*").eq("piece_id", piece.id).single().then(must<Contract>),
+      supabase.from("piece_sections").select("*").eq("piece_id", piece.id).order("position").then(must<Section[]>),
+      supabase.from("threads").select("id").eq("piece_id", piece.id).eq("subject", "outline").maybeSingle()
+        .then(must<{ id: string } | null>),
+    ]);
+    const messages = thread
+      ? must<ThreadMessage[]>(await supabase.from("thread_messages").select("*").eq("thread_id", thread.id).order("created_at"))
+      : [];
+    return { contract, sections, messages };
+  }, [piece.id]);
+
+  const [draft, setDraft] = useState<Draft[] | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [answering, setAnswering] = useState<{ question: string } | null>(null);
+  const confirmed = Boolean(piece.outline_confirmed_at);
+  const recipe = normalise(piece.recipe);
+  const aiThread = recipe.outline.mode === "free" && recipe.outline.ai_thread;
+
+  useEffect(() => {
+    if (data && draft === null) {
+      setDraft(data.sections.map((s) => ({ key: s.id, heading: s.heading, purpose: s.purpose, expectation_ids: s.expectation_ids })));
+    }
+  }, [data, draft]);
+
+  if (error) return <ErrorText>{error}</ErrorText>;
+  if (!data || !draft) return <Loading />;
+  const { contract, messages } = data;
+  const saved = JSON.stringify(data.sections.map((s) => [s.heading, s.purpose, s.expectation_ids]));
+  const dirty = JSON.stringify(draft.map((s) => [s.heading.trim(), s.purpose.trim(), s.expectation_ids])) !== saved;
+  const uncovered = contract.expectations.filter((e) => !draft.some((s) => s.expectation_ids.includes(e.id)));
+
+  async function act(fn: () => Promise<void>) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await fn();
+    } catch (err) {
+      setActionError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save() {
+    const clean = draft!.filter((s) => s.heading.trim()).map((s) => ({ heading: s.heading.trim(), purpose: s.purpose.trim(), expectation_ids: s.expectation_ids }));
+    const { error: err } = await supabase.rpc("save_outline", { target_piece: piece.id, sections: clean });
+    if (err) throw err;
+    setDraft(null);
+    await reload();
+  }
+
+  const update = (k: string, patch: Partial<Draft>) => setDraft(draft.map((s) => (s.key === k ? { ...s, ...patch } : s)));
+  const move = (i: number, d: -1 | 1) => {
+    const list = [...draft];
+    [list[i], list[i + d]] = [list[i + d], list[i]];
+    setDraft(list);
+  };
+
+  return (
+    <div className="stack-lg">
+      {recipe.analysis.enabled && <AnalysisPanel piece={piece} onRan={onChanged} onAnswer={(q) => setAnswering({ question: q })} />}
+
+      <div className="workbench">
+        <section className="doc-surface" aria-label="Outline">
+          <header>
+            <strong>Outline</strong>
+            {confirmed ? <span className="tag ok">Confirmed</span> : <span className="tag">Draft</span>}
+            <span className="spacer" />
+            {!confirmed && dirty && <button type="button" className="btn btn-small" disabled={busy} onClick={() => act(save)}>Save</button>}
+          </header>
+          <div className="stack" style={{ padding: "18px 20px 22px" }}>
+            {recipe.outline.mode === "fixed" && (
+              <p className="small muted">This format starts from a fixed outline. Adjust the headings if this piece needs it.</p>
+            )}
+            <p className="small muted">
+              Each section says which contract expectations it is responsible for. Those are what it gets checked
+              against after you write it.
+            </p>
+            <ol className="expectations outline-list">
+              {draft.map((s, i) => (
+                <li key={s.key}>
+                  <input type="text" value={s.heading} disabled={confirmed} onChange={(e) => update(s.key, { heading: e.target.value })}
+                    placeholder="Section heading" aria-label={`Section ${i + 1} heading`} className="heading-input" />
+                  <input type="text" value={s.purpose} disabled={confirmed} onChange={(e) => update(s.key, { purpose: e.target.value })}
+                    placeholder="What this section does for the reader" aria-label={`Section ${i + 1} purpose`} />
+                  <div className="owed">
+                    {contract.expectations.map((e, n) => (
+                      <label key={e.id} className={`chip${s.expectation_ids.includes(e.id) ? " on" : ""}`} title={e.text}>
+                        <input type="checkbox" disabled={confirmed} checked={s.expectation_ids.includes(e.id)} onChange={(ev) => update(s.key, {
+                          expectation_ids: ev.target.checked ? [...s.expectation_ids, e.id] : s.expectation_ids.filter((x) => x !== e.id),
+                        })} />
+                        Expectation {n + 1}
+                      </label>
+                    ))}
+                  </div>
+                  {!confirmed && (
+                    <div className="row" style={{ gap: 2 }}>
+                      <button type="button" className="btn btn-quiet btn-small" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
+                      <button type="button" className="btn btn-quiet btn-small" disabled={i === draft.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
+                      <button type="button" className="btn btn-quiet btn-small btn-danger" onClick={() => setDraft(draft.filter((x) => x.key !== s.key))}>Remove</button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ol>
+            {!confirmed && (
+              <div>
+                <button type="button" className="btn btn-small" onClick={() => setDraft([...draft, { key: key(), heading: "", purpose: "", expectation_ids: [] }])}>
+                  Add section
+                </button>
+              </div>
+            )}
+            {uncovered.length > 0 && draft.length > 0 && (
+              <p className="notice small">
+                Not covered by any section: {uncovered.map((e) => `"${e.text}"`).join("; ")}
+              </p>
+            )}
+            <ErrorText>{actionError}</ErrorText>
+            {!confirmed && (
+              <div className="row">
+                <button type="button" className="btn btn-primary" disabled={busy || draft.length === 0} onClick={() => act(async () => {
+                  if (dirty) await save();
+                  const { error: err } = await supabase.rpc("confirm_outline", { target_piece: piece.id });
+                  if (err) throw err;
+                  onAdvanced();
+                })}>
+                  Confirm outline
+                </button>
+                <span className="small muted">Then each section is researched, briefed and written in turn.</span>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {!confirmed && aiThread && (
+          <aside className="rail thread" aria-label="Conversation">
+            <h3>Work it out with AI</h3>
+            <div className="messages">
+              {messages.length === 0 && <p className="small muted">Ask for a first outline built from your contract and the reviewed research.</p>}
+              {messages.map((m) => (
+                <div key={m.id} className={`msg ${m.role}`}>
+                  <p>{m.content}</p>
+                  {m.role === "ai" && m.payload?.sections && (
+                    <details>
+                      <summary className="small">Suggested outline ({m.payload.sections.length} sections)</summary>
+                      <ol className="small">{m.payload.sections.map((s, i) => <li key={i}><strong>{s.heading}</strong>: {s.purpose}</li>)}</ol>
+                      <button type="button" className="btn btn-small" onClick={() => setDraft(m.payload!.sections!.map((s) => ({
+                        key: key(),
+                        heading: s.heading,
+                        purpose: s.purpose,
+                        expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
+                      })))}>
+                        Use this outline
+                      </button>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+            <textarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="e.g. Put the cost comparison before the deep dives" aria-label="Message" style={{ minHeight: 70 }} />
+            <AiAction<{ message: ThreadMessage }>
+              label={messages.length ? "Send" : "Suggest an outline"}
+              disabled={dirty}
+              reason="Save your edits first so the AI sees them"
+              payload={{ task: "outline_suggest", piece_id: piece.id, message }}
+              onDone={(r) => {
+                setData((d) => d && { ...d, messages: [...d.messages, r.message] });
+                setMessage("");
+                reload();
+              }}
+            />
+          </aside>
+        )}
+      </div>
+
+      {recipe.outline.seo_geo_check && <SeoGeoPanel piece={piece} scope="outline" result={piece.seo_geo_outline} disabled={dirty || data.sections.length === 0} reason={dirty ? "Save your edits first" : "Add sections first"} onDone={onChanged} />}
+
+      {answering && (
+        <Modal title="Save the expert's answer as an insight" onClose={() => setAnswering(null)}>
+          <p className="small muted">Question: {answering.question}</p>
+          <CardForm
+            initial={{ ...emptyCard("opinion"), detail: "" }}
+            submitLabel="Save insight card"
+            onCancel={() => setAnswering(null)}
+            onSubmit={async (f) => {
+              const { data: auth } = await supabase.auth.getUser();
+              const { error: err } = await supabase.from("cards").insert({ ...f, company_id: piece.company_id, created_by: auth.user!.id, origin: "manual" });
+              if (err) setActionError(err.message);
+              setAnswering(null);
+            }}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function AnalysisPanel({ piece, onRan, onAnswer }: { piece: Piece; onRan: () => void; onAnswer: (q: string) => void }) {
+  const a: Analysis | null = piece.analysis;
+  return (
+    <section className="card stack" aria-label="Analysis">
+      <div className="row">
+        <div className="stack" style={{ gap: 2 }}>
+          <h2>Where the substance is</h2>
+          <p className="small muted">Tensions between sources, where your own insight differs from the consensus, and what nobody answers.</p>
+        </div>
+        <span className="spacer" />
+        {!piece.outline_confirmed_at && (
+          <AiAction label={a ? "Run again" : "Analyse research"} primary={!a} payload={{ task: "analysis", piece_id: piece.id }} onDone={onRan} />
+        )}
+      </div>
+      {a && (
+        <div className="grid-3 analysis">
+          <div>
+            <h3>Tensions</h3>
+            {a.tensions.length ? <ul>{a.tensions.map((t, i) => <li key={i}>{t.text} <span className="faint mono">{t.items.map((n) => `[${n}]`).join("")}</span></li>)}</ul> : <p className="small faint">None found.</p>}
+          </div>
+          <div>
+            <h3>Your insight vs. the consensus</h3>
+            {a.consensus_vs_insight.length ? <ul>{a.consensus_vs_insight.map((t, i) => <li key={i}>{t.text} <span className="faint mono">{t.items.map((n) => `[${n}]`).join("")}</span></li>)}</ul> : <p className="small faint">No company insight in the approved research yet.</p>}
+          </div>
+          <div>
+            <h3>Open gaps</h3>
+            {a.gaps.length ? (
+              <ul>
+                {a.gaps.map((g, i) => (
+                  <li key={i}>
+                    {g.text}
+                    <div className="small muted">Ask your expert: {g.expert_question}</div>
+                    <button type="button" className="btn btn-quiet btn-small" onClick={() => onAnswer(g.expert_question)}>Record the answer</button>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="small faint">None found.</p>}
+          </div>
+        </div>
+      )}
+      {a?.contract_suggestions && a.contract_suggestions.length > 0 && (
+        <div className="notice stack" style={{ gap: 6 }}>
+          <strong className="small">The research suggests changes to your reader contract</strong>
+          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
+            {a.contract_suggestions.map((c, i) => <li key={i}>{c.change} <span className="muted">({c.why})</span></li>)}
+          </ul>
+          <span className="small muted">If you agree, edit the contract in step 1 and confirm it again before confirming the outline.</span>
+        </div>
+      )}
+    </section>
+  );
+}

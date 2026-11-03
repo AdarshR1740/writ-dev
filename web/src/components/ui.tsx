@@ -1,0 +1,203 @@
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { callFunction, errorMessage } from "../lib/supabase";
+import { formatCost } from "../lib/format";
+import type { Estimate } from "../lib/types";
+
+export function ErrorText({ children }: { children: ReactNode }) {
+  if (!children) return null;
+  return <p className="error" role="alert">{children}</p>;
+}
+
+export function Loading({ label = "Loading…" }: { label?: string }) {
+  return <p className="muted" aria-live="polite">{label}</p>;
+}
+
+export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      className="btn btn-small"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+          setTimeout(() => setDone(false), 1600);
+        } catch {
+          window.prompt("Copy this text:", text);
+        }
+      }}
+    >
+      {done ? "Copied" : label}
+    </button>
+  );
+}
+
+export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    ref.current?.querySelector<HTMLElement>("input, textarea, select, button")?.focus();
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={ref}>
+        <div className="row">
+          <h2>{title}</h2>
+          <span className="spacer" />
+          <button type="button" className="btn btn-quiet btn-icon" onClick={onClose} aria-label="Close" title="Close (Esc)">×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export function Tabs<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+}) {
+  return (
+    <div className="tabs" role="tablist">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="tab"
+          className="tab"
+          aria-selected={value === o.value}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function PromptHelper({ title, prompt, children }: { title: string; prompt: string; children?: ReactNode }) {
+  return (
+    <details className="helper">
+      <summary>{title}</summary>
+      <div className="helper-body">
+        {children}
+        <pre className="prompt">{prompt}</pre>
+        <div className="row"><CopyButton text={prompt} label="Copy prompt" /></div>
+      </div>
+    </details>
+  );
+}
+
+/**
+ * Two-step AI action: first shows which model will run and what it should
+ * cost, then runs on confirmation.
+ */
+export function AiAction<T>({
+  label,
+  payload,
+  disabled,
+  onDone,
+  fn = "ai",
+  primary = true,
+  reason,
+}: {
+  label: string;
+  payload: Record<string, unknown>;
+  disabled?: boolean;
+  /** Shown beside the button while it's disabled, so it never looks broken. */
+  reason?: string;
+  onDone: (result: T) => void;
+  fn?: string;
+  primary?: boolean;
+}) {
+  const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [busy, setBusy] = useState<"estimate" | "run" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function check() {
+    setBusy("estimate");
+    setError(null);
+    try {
+      setEstimate(await callFunction<Estimate>(fn, { ...payload, mode: "estimate" }));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function run() {
+    setBusy("run");
+    setError(null);
+    try {
+      const result = await callFunction<T>(fn, payload);
+      setEstimate(null);
+      onDone(result);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (estimate) {
+    return (
+      <div className="stack" style={{ gap: 8 }}>
+        <p className="small">
+          Runs on <span className="mono">{estimate.model}</span>, {formatCost(estimate.cost_usd)} (estimate).
+          {estimate.month_budget != null && estimate.month_spent != null && (
+            <span className="muted"> This month: ${estimate.month_spent.toFixed(2)} of ${estimate.month_budget.toFixed(2)}.</span>
+          )}
+        </p>
+        {estimate.month_budget != null && estimate.month_after != null && estimate.month_after > estimate.month_budget && (
+          <p className="notice small">
+            This run would take the month past its ${estimate.month_budget.toFixed(2)} budget.
+            {estimate.budget_hard_limit ? " It can still run; after that, AI runs stop until next month or until an editor raises the budget." : ""}
+          </p>
+        )}
+        <div className="row">
+          <button type="button" className="btn btn-primary" onClick={run} disabled={busy !== null}>
+            {busy === "run" ? "Working…" : "Run"}
+          </button>
+          <button type="button" className="btn btn-quiet" onClick={() => setEstimate(null)} disabled={busy !== null}>
+            Cancel
+          </button>
+        </div>
+        <ErrorText>{error}</ErrorText>
+      </div>
+    );
+  }
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <div className="row" style={{ gap: 10 }}>
+        <button type="button" className={`btn${primary ? " btn-primary" : ""}`} onClick={check} disabled={disabled || busy !== null}>
+          {busy === "estimate" ? "Checking…" : label}
+        </button>
+        {disabled && reason && <span className="small muted disabled-reason">{reason}</span>}
+      </div>
+      <ErrorText>{error}</ErrorText>
+    </div>
+  );
+}
+
+/** One-line page intro; the longer explanation sits behind "How this works". */
+export function Lede({ children, more }: { children: ReactNode; more?: ReactNode }) {
+  return (
+    <div className="lede">
+      <p className="muted">{children}</p>
+      {more && (
+        <details className="how">
+          <summary>How this works</summary>
+          <p className="muted small">{more}</p>
+        </details>
+      )}
+    </div>
+  );
+}

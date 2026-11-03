@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    .page { fill: #1b2230 } .line { stroke: #ffffff } .seal { fill: #2f4bd8 }
+    @media (prefers-color-scheme: dark) { .page { fill: #e6e9ee } .line { stroke: #1a1f28 } .seal { fill: #93a5ff } }
+  </style>
+  <defs><mask id="cut"><rect width="32" height="32" fill="#fff"/><circle cx="23" cy="23.5" r="8.7" fill="#000"/></mask></defs>
+  <g mask="url(#cut)">
+    <rect class="page" x="5" y="3" width="19" height="25" rx="2.5"/>
+    <path class="line" d="M9.5 9.5h10M9.5 14h7" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+  <circle class="seal" cx="23" cy="23.5" r="6.5"/>
+</svg>

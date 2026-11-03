@@ -1,0 +1,17 @@
+# Dependencies and builds
+node_modules
+dist
+*.tsbuildinfo
+
+# Local secrets and settings: never commit
+.env
+.env.local
+*.local
+supabase/functions/.env
+
+# Logs and editor files
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
