@@ -1,6 +1,6 @@
-# Writer v2: Prompt inventory
+# Writ: Prompt inventory
 
-Every prompt in v2, in pipeline order: where it lives, which context blocks it
+Every prompt in Writ, in pipeline order: where it lives, which context blocks it
 receives, which model tier runs it, and what changed in the review pass. Use this to
 check that each step we discussed has a default prompt.
 
@@ -35,7 +35,7 @@ The `ai` tasks live in `supabase/functions/ai/`. Research lives in `supabase/fun
 | 6 | Findings from your own sources | `research.extract_source` / `EXTRACT_SYSTEM` (Anthropic citations) or `EXTRACT_SYSTEM_QUOTED` (others) | Brief, contract, (section), the source | research | **New:** a quoted variant for non-Anthropic providers. The server checks each quote against the source text. |
 | 7 | Analysis | `analysis` / `ANALYSIS_SYSTEM` | Brief, contract, approved piece research | reason | **New output:** `contract_suggestions` (§15.3: research can suggest contract changes; the writer decides). |
 | 8 | Outline | `outline_suggest` / `OUTLINE_SYSTEM` | Brief, contract, analysis, approved research, format profile, thread | reason | No change. |
-| 9 | SEO & GEO check, outline | `seo_geo_check` (scope `outline`) / `SEO_GEO_BASE` + `SEO_GEO_CHECKS.outline` | Brief, contract, approved `[serp]` items, outline | reason | **New** (adapted from v1's SEO and GEO guidelines). |
+| 9 | SEO & GEO check, outline | `seo_geo_check` (scope `outline`) / `SEO_GEO_BASE` + `SEO_GEO_CHECKS.outline` | Brief, contract, approved `[serp]` items, outline | reason | **New**. |
 | 10 | Section brief | `section_brief` / `BRIEF_SYSTEM` | Section, outline, analysis, section research | reason | Now opens with an `answer:` bullet (answer-first for readers and AI answer engines). |
 | 11 | AI draft (secondary) | `section_draft` / `DRAFT_SYSTEM` | Section, outline, section research, core voice, format profile, voice memory, brief | write | Opens with the `answer:` point and names the source of each figure in the text. |
 | 12 | Grammar check | `grammar_check` / `GRAMMAR_SYSTEM` | The text only | extract | No change. |
@@ -65,9 +65,9 @@ recipe (`requireStep`), so a switched-off step can't be called through the API.
 
 The plan only proposes. The writer edits the entries, sections and carried items, and `create_from_plan` then creates the pieces.
 
-## C. SEO and GEO: what came from v1 and what didn't
+## C. SEO and GEO: the checks and how they changed
 
-Kept from v1's `DEFAULT_BLOG_SEO_GUIDELINES`, `DEFAULT_BLOG_GEO_GUIDELINES` and outline rules:
+Based on common SEO and GEO guidelines and outline rules:
 
 - **Title:** primary keyword near the start, about 60 characters or fewer.
 - **Meta description:** 140–155 characters.
@@ -78,9 +78,9 @@ Kept from v1's `DEFAULT_BLOG_SEO_GUIDELINES`, `DEFAULT_BLOG_GEO_GUIDELINES` and 
 - **Structure:** tables for comparisons, numbered steps for procedures.
 - **Internal links:** linking opportunities, with suggested anchor text.
 
-Changed to fit the v2 decisions (§13):
+Changed to fit Writ's decisions (§13):
 
-- **No score, no "mandatory" rewriting pass.** v1 rewrote the outline automatically. v2 returns a checklist (fine / improve / n/a) with evidence and a fix, and the writer decides.
+- **No score, no "mandatory" rewriting pass.** Nothing rewrites the outline automatically. Writ returns a checklist (fine / improve / n/a) with evidence and a fix, and the writer decides.
 - **No keyword density, repetition or term quotas.**
 - **Intent and coverage come from approved search-landscape research,** not from invented SERP data (pain point #2).
 - **Added a first-party check:** the company's own insight is what AI answer engines can't find elsewhere (§13.2, §15).

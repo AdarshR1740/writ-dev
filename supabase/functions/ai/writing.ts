@@ -383,7 +383,7 @@ ${text}
 }
 
 // ---------------------------------------------------------------------------
-// SEO and GEO checks (outline and finished piece). Adapted from v1's SEO/GEO
+// SEO and GEO checks (outline and finished piece). Based on common SEO/GEO
 // guidelines, as checklists with evidence, never a score or keyword quota.
 // ---------------------------------------------------------------------------
 

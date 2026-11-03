@@ -1,4 +1,4 @@
--- Foundation for v2: companies, teams, provider keys, context documents, cards, usage.
+-- Foundation: companies, teams, provider keys, context documents, cards, usage.
 -- Every company is an isolated system: every row below carries company_id and
 -- row-level security limits access to members of that company.
 

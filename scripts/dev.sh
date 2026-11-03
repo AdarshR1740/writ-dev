@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Run Writ entirely on your computer: a local Supabase (database, sign-in,
-# Edge Functions) in Docker, plus the web app at http://localhost:5173.
+# Optional: run Writ entirely on your computer, with no cloud project: a local
+# Supabase (database, sign-in, Edge Functions) in Docker, plus the web app at
+# http://localhost:5173. For your Supabase cloud project, use cloud-setup.sh instead.
+#
+# Local mode keeps its own settings (web/.env.localdb.local), so it never
+# touches the cloud settings in web/.env.local.
 #
 # Needs: Docker Desktop (running) and Node 18+. Nothing is deployed anywhere.
 # Stop with Ctrl+C; the database keeps its data until you run:
@@ -24,9 +28,9 @@ npx -y supabase@2 start -x studio,imgproxy,logflare,vector,supavisor,realtime,st
 # An existing local database keeps its data; apply any migrations added since it was created.
 npx -y supabase@2 migration up --local
 
-# Point the web app at the local project (git-ignored).
+# Point the web app at the local project, in local mode's own settings file (git-ignored).
 eval "$(npx -y supabase@2 status -o env | grep -E '^(API_URL|ANON_KEY)=')"
-printf 'VITE_SUPABASE_URL=%s\nVITE_SUPABASE_ANON_KEY=%s\n' "$API_URL" "$ANON_KEY" > web/.env.local
+printf 'VITE_SUPABASE_URL=%s\nVITE_SUPABASE_ANON_KEY=%s\n' "$API_URL" "$ANON_KEY" > web/.env.localdb.local
 
 [ -d web/node_modules ] || (cd web && npm install)
 
@@ -38,4 +42,4 @@ echo
 echo "Writ is starting at http://localhost:5173"
 echo "Sign up with any email; no confirmation email is needed locally."
 echo
-(cd web && npx vite --port 5173 --strictPort)
+(cd web && npx vite --mode localdb --port 5173 --strictPort)

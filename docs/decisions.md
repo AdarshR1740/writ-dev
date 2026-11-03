@@ -1,8 +1,7 @@
-# Writer v2: Decision log
+# Writ: Decision log
 
 ## 1. Purpose and status
-- This is a living decision log for v2. It records what was decided, why, and what is still open. It is not a build spec.
-- It builds on the v1 overview (`docs/v1-overview.md` in the earlier `writing-tool-v1` repository), which covers the v1 architecture and weak spots, and on the market research done while planning v2 (summarised in §3). Code paths such as `src/services/...` in this log refer to that v1 repository.
+- This is Writ's living decision log. It records what was decided, why, and what is still open. It is not a build spec.
 
 ## 2. The six pain points we are solving
 | # | Pain point | Status |
@@ -62,7 +61,6 @@
 - **Update from #2:** research now runs at two levels, the piece and each section (see §12.4). Outline and drafting receive only research items the writer has *approved*.
 
 - **Who sets the wiring:** the wiring is built into the product so it works for most users without any setup. Users don't have to configure defaults or overrides.
-- **v1 starting point:** the stage prompts already use `{variable}` templates (`interpolatePromptTemplate` in `src/services/pipelineEngine.ts`). Each template's variables are documented in `src/components/promptStudio/promptMetadata.ts`. Context blocks become first-class variables.
 
 ## 6. Decision: workspace model, from a solo founder to an agency
 - **User decision:** the persona doesn't change the workflow. It only changes how many of something a user needs. A content marketer has a few voices; an agency needs a few per client.
@@ -74,7 +72,7 @@
 - **All four signals are captured:**
   1. **Draft vs. final edits.** The diff between the AI draft and the final text feeds the edit patterns block.
   2. **Choices and rejections.** Which angles, outlines and sections the user picked or discarded.
-  3. **Feedback in the user's own words.** v1's `EditorialRevision` notes are kept across pieces, instead of being thrown away after each piece.
+  3. **Feedback in the user's own words.** Editorial feedback notes are kept across pieces, instead of being thrown away after each piece.
   4. **Past writing samples.** See §8.
 - **Capturing the final text uses both routes (user decision):**
   - **Edit in the app:** for short pieces.
@@ -99,7 +97,7 @@
 - The **core voice** is a general document with general guidelines on voice and philosophy, and it lives here.
 - **Input:** paste, and **upload any files they have**.
 - **AI combines** everything into one consolidated doc that the user can edit.
-- When new material is added later, it is merged in, with a diff for approval. It is never silently regenerated. This avoids repeating v1's prompt-overwrite bug in `src/services/storage.ts`.
+- When new material is added later, it is merged in, with a diff for approval. It is never silently regenerated.
 
 ### 8.3 Published archive and format style profiles
 - **The problem the user raised:** writing style differs by format. A short post, a long-form blog, thought leadership and promotional social all read differently.
@@ -183,12 +181,8 @@
 - **From #6:** see §16.7 (brief bullet format, grammar-check scope, record storage, disclosure wording, Article 50 applicability).
 - **From architecture:** see §17.6 (batch job design, key-encryption policy, roles beyond member/editor, free-tier limits).
 
-## 11. Pointers into the v1 code
-- `src/services/pipelineEngine.ts`: `interpolatePromptTemplate` and the per-stage callers, which will become the wiring layer.
-- `src/components/promptStudio/promptMetadata.ts`: the variable docs per stage. This is where the wiring becomes visible.
-- `src/types/index.ts`: `EditorialRevision`, which feeds the feedback log.
-- `src/services/skillParser.ts`: the existing .md/SKILL.md import, reusable for voice-rule uploads.
-- `src/services/storage.ts`: the localStorage blob and the string-sniffing prompt migration, both to be replaced.
+## 11. (Retired)
+This section pointed into an earlier prototype's code, which isn't part of Writ.
 
 ## 12. Pain point #2: unchecked or invented facts
 
@@ -210,7 +204,7 @@
 2. Real figures that are outdated or taken out of context.
 3. A real source that doesn't support the claim attached to it. A Stanford-led study (Nature Communications, 2025) found 50–90% of responses weren't fully supported by their cited sources. Readers rarely open the links.
 
-v1 sits at the worst end of all three: its SERP research is invented by the model, and the audit never looks at claims.
+Tools that invent their search research and never audit claims sit at the worst end of all three.
 
 ### 12.3 Diagnosis and principle (user decision)
 - "We are overthinking." AI can't yet reliably find the best sources, so **we don't try to make the AI verify itself.**
@@ -231,7 +225,6 @@ v1 sits at the worst end of all three: its SERP research is invented by the mode
   - **Just-in-time:** research → review → draft, one section at a time.
   - **Up front:** research all sections, review in one sitting, then draft them all.
 - **Update from #6:** a **section brief** step now sits between each section's review gate and the draft, and drafting is manual by default (see §16.4).
-- **Builds on v1:** `draftSingleSection` already drafts one section at a time, which is the natural place for this loop.
 
 ### 12.5 The research item and the review gate
 - **Each item has:**
@@ -298,7 +291,7 @@ v1 sits at the worst end of all three: its SERP research is invented by the mode
 - **Keyword stuffing.** One Surfer user admits to "sentences that made no sense just to reach a 100".
 - **Sameness by design.** A score built from the top 10 results rewards repeating them. That works directly against pain point #1.
 - **Diminishing returns.** Reviewers say pushing B2B content past roughly 80–85 makes it worse.
-- **v1 already has a fake score.** `runEditorialAudit` starts at 96, subtracts points for banned words and long sentences, and clamps the result to 70–99.
+- **Fake scores exist.** One tool we looked at starts every piece at 96, subtracts points for banned words and long sentences, and clamps the result to 70–99.
 - **The wider shift.** AI search engines increasingly cite pages outside Google's top 10; one reported figure is 38% of AI Overview citations. The strongest reported signal is data or insight the engine can't find elsewhere. These are vendor studies, but the direction supports #1 and #2.
 
 ### 13.3 The first proposal, and why it was rejected (user feedback)
@@ -329,7 +322,6 @@ v1 sits at the worst end of all three: its SERP research is invented by the mode
   - The writer spots what's missing and asks the AI to revise. They iterate a few times, then the writer **confirms**.
 - **It works like a chat conversation.** Each round is a message in a thread attached to the contract. That makes it easier for users to follow, and they can trace back why an expectation was added or dropped.
 - **Possible broader use:** the same pattern (AI proposes, writer critiques in a thread, writer confirms) could apply to other gates (research items, outline, sections). That will be **decided stage by stage later**.
-  - If it is adopted, each thread replaces v1's `EditorialRevision` notes.
   - The writer's messages would also feed the feedback log (§7).
 
 ### 13.6 Decision: checking against the contract (user decision)
@@ -410,9 +402,6 @@ These figures come from rate-guide blogs, so they are rough. The buyer's real qu
   | Drafting sections, voice consolidation | Best prose and voice-following | Strong |
 
 - **Defaults plus advanced override (user decision).** We ship tested defaults for each task type and each provider. An advanced setting lets a company change the model for any task type.
-- **What this replaces in v1:**
-  - Provider detection by key prefix and the hard-coded model fallback lists in `callLLMRaw` (`src/services/pipelineEngine.ts`).
-  - The duplicate callers in `src/services/transformer.ts`.
 - **Context blocks keep requests small.** The separate blocks and top-N retrieval from §5 and §8.4 reduce token use alongside the routing.
 - **No per-piece cost figure is promised yet.** Measure real token use once the pipeline runs.
 - The full design of routing comes later, along with the rest of the architecture.
@@ -564,18 +553,17 @@ This section covers the remaining problem: **depth**. Research can feel shallow 
 
 ## 17. Architecture decisions
 
-### 17.1 v2 is written from scratch (user decision)
-- We won't map v2 onto v1's six stages. The v2 workflow is designed and built fresh.
-- v1 code is a reference only. §11 lists which parts are worth a look.
+### 17.1 Written from scratch (user decision)
+- Writ's workflow is designed and built fresh, not adapted from an earlier tool's stages.
 
-### 17.2 Why v2 needs a backend
+### 17.2 Why Writ needs a backend
 | Need | Source | Can the browser alone handle it? |
 |---|---|---|
 | Fetching URLs from other sites (blocked by CORS) | §8.3, §12.7 | No |
 | Isolated companies, with teams | §6, §14.3 | No (needs accounts) |
 | Thousands of insight cards, bulk import, retrieval | §8.4 | Only partly (IndexedDB is slow and tied to one device) |
 | Uploaded files and source snapshots | §8, §12.8 | Only partly (size limits, one device) |
-| Safe storage of customer keys for several providers | §14.4 | Only partly (v1 keeps them in plain text in `localStorage`) |
+| Safe storage of customer keys for several providers | §14.4 | Only partly (a browser-only app keeps them in plain text in `localStorage`) |
 | Long jobs, such as extracting cards from 1,000 transcripts | §8.4 | No (the job dies when the tab closes) |
 | Editorial record and audit export | §16.6 | Only partly (a record kept only in the writer's browser can't be trusted) |
 | Billing by number of companies | §14.3 | No |
@@ -583,7 +571,7 @@ This section covers the remaining problem: **depth**. Research can feel shallow 
 
 ### 17.3 Decision: Supabase (user decision, for free testing)
 - **Comparison of free tiers:**
-  - **Firebase Spark** can't run the core of v2. Cloud Functions need the paid Blaze plan, and Spark functions can't call external APIs. Blaze has a free allowance but requires a billing card.
+  - **Firebase Spark** can't run the core of Writ. Cloud Functions need the paid Blaze plan, and Spark functions can't call external APIs. Blaze has a free allowance but requires a billing card.
   - **Supabase Free** covers everything:
     - Postgres, with 500 MB per project and no backups
     - 1 GB of file storage, with a 50 MB maximum per upload

@@ -2,7 +2,7 @@
 
 *Expert content, AI-assisted.* Brand notes: `docs/brand.md`.
 
-The full pipeline is built end to end. See `docs/v2-decisions.md` for the reasoning
+The full pipeline is built end to end. See `docs/decisions.md` for the reasoning
 behind each piece, and §18 there for how each decision was implemented.
 
 ## The flow
@@ -166,7 +166,7 @@ templates are presets:
   or memory.
 
 **Providers.** Each company stores keys for several providers and makes one active. All
-prompts are listed in `docs/v2-prompts.md`.
+prompts are listed in `docs/prompts.md`.
 
 | Provider | Default models | Web search | Research quotes |
 |---|---|---|---|
@@ -207,86 +207,57 @@ This slice sets up everything the writing pipeline will draw on.
 supabase/migrations/   database schema, row-level security, RPCs
 supabase/functions/    edge functions: provider-keys, ai, fetch-url, research, publish (+ _shared)
 web/                   React + TypeScript + Vite app
-scripts/dev.sh         run everything locally
+scripts/cloud-setup.sh set up and update your Supabase cloud project
+scripts/dev.sh         optional: run everything locally in Docker
 docs/                  decisions, prompts, feature audit, design critique, brand
 ```
 
-## Try it on your computer (no deploy)
+## Get started (Supabase cloud)
 
-Runs everything locally: a local Supabase (database, sign-in, Edge Functions) in
-Docker, and the web app. Nothing is sent anywhere except the AI calls you make with
-your own key.
+You need Node 18 or newer and a free project at [supabase.com](https://supabase.com). No Docker.
 
-You need [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running) and
-Node 18 or newer. Then, from the repository folder:
-
-```bash
-./scripts/dev.sh
-```
-
-- The first run downloads the Supabase images, which takes a few minutes. Later runs start in seconds.
-- Open http://localhost:5173 and sign up with any email. Locally, no confirmation email is sent and none is needed.
-- Create a company, then add an AI key under **AI provider & models** to use the AI steps.
-  Everything else (house file editing, cards, pieces, contracts, review, history) works without a key.
-- Stop with Ctrl+C. Your data stays in the local database until you run
-  `npx supabase stop --no-backup`.
-
-What the script does: `supabase start` applies every migration in `supabase/migrations`.
-It writes the local URL and key to `web/.env.local`, and creates
-`supabase/functions/.env` with a random `KEY_ENCRYPTION_SECRET`; both files are
-git-ignored. Then it serves the functions and starts the web app.
-
-**Local models:** the functions run inside Docker and only call public web addresses,
-so an Ollama or LM Studio server on `localhost` isn't reachable. Use a cloud key
-(Anthropic, OpenAI, Gemini), or expose the local model through a tunnel as described below.
-
-## Set up (Supabase free tier)
-
-1. Create a project at supabase.com. Then log in with the CLI:
+1. Create a project in the Supabase dashboard. Its ref is in the URL:
+   `supabase.com/dashboard/project/<project-ref>`.
+2. From this folder, run:
 
    ```bash
-   npx supabase login
+   ./scripts/cloud-setup.sh <project-ref>
    ```
 
-   Link this folder to your project:
+   It signs you in to Supabase (a browser opens the first time), links the folder, applies the
+   database migrations, sets the key-encryption secret once, deploys every Edge Function, and writes
+   `web/.env.local` with your project's URL and public key. Run it again after pulling changes:
+   it applies new migrations and redeploys the functions, and keeps the existing secret.
+3. In the dashboard, under **Authentication → URL Configuration**, set the Site URL to
+   `http://localhost:5173` and add `http://localhost:5173/**` to the redirect URLs. New accounts get a
+   confirmation email, and the link needs to come back to the app.
+4. Start the app:
 
    ```bash
-   npx supabase link --project-ref <your-project-ref>
+   cd web && npm run dev
    ```
 
-2. Apply the schema:
+   Open http://localhost:5173, create your account, confirm the email, and add your company.
 
-   ```bash
-   npx supabase db push
-   ```
+**The encryption secret.** AI keys and WordPress passwords are encrypted with `KEY_ENCRYPTION_SECRET`,
+which lives only in the project's secrets. Never change it: if it changes, every saved key has to be
+added again.
 
-3. Set the key-encryption secret. Generate it once and keep it safe. If you lose it,
-   every stored provider key has to be added again.
+**Day to day:** changes in `web/` show up in the browser as you save. Changes to
+`supabase/functions/` or new files in `supabase/migrations/` reach the cloud project when you run
+`./scripts/cloud-setup.sh <project-ref>` again.
 
-   ```bash
-   npx supabase secrets set KEY_ENCRYPTION_SECRET=$(openssl rand -base64 32)
-   ```
+On Windows, run the scripts in Git Bash or WSL.
 
-4. Deploy the functions:
+## Optional: run everything locally
 
-   ```bash
-   npx supabase functions deploy provider-keys ai fetch-url research publish
-   ```
+To work offline, `./scripts/dev.sh` runs a separate local Supabase in Docker (needs Docker Desktop)
+plus the web app at http://localhost:5173. It keeps its own settings in `web/.env.localdb.local` and
+its own data, so it never touches your cloud project or `web/.env.local`. Locally, sign-up needs no
+email confirmation. Stop it with Ctrl+C; wipe its data with `npx supabase stop --no-backup`.
 
-5. Configure the web app:
-
-   ```bash
-   cd web && cp .env.example .env
-   ```
-
-   Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (Settings → API), then:
-
-   ```bash
-   npm install && npm run dev
-   ```
-
-6. In Supabase **Auth → URL configuration**, add your site URL, for example
-   `http://localhost:5173`, so the confirmation links work.
+The functions run inside Docker and only call public web addresses, so an Ollama or LM Studio server
+on `localhost` isn't reachable; use a cloud key, or expose the local model through a tunnel.
 
 ## Checks
 

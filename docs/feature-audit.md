@@ -1,4 +1,4 @@
-# Writer v2: Feature audit
+# Writ: Feature audit
 
 I traced each feature from the screen, through the database calls, server functions and
 prompts, to what gets saved, and back to the screen. Bugs found were fixed before moving

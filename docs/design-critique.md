@@ -1,6 +1,6 @@
-# Design Critique: Writer v2
+# Design Critique: Writ
 
-Scope: every screen of the v2 web app (`web/`), checked against 34 renders with mocked data:
+Scope: every screen of the web app (`web/`), checked against 34 renders with mocked data:
 - desktop at 1440px, mobile at 390px, and dark mode;
 - every piece stage, the workflow editor, modals, auth and keyboard focus.
 
