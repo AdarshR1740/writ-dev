@@ -7,7 +7,7 @@
 # Safe to run again: it applies new migrations and redeploys the functions, and it
 # keeps the existing encryption secret.
 #
-# Needs: Node 18+. No Docker.
+# Needs: Node 18+. No Docker: functions are bundled on Supabase's servers (--use-api).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,7 +38,7 @@ else
 fi
 FUNCTIONS=$(find supabase/functions -mindepth 1 -maxdepth 1 -type d ! -name '_*' -exec basename {} \; | sort | tr '\n' ' ')
 # shellcheck disable=SC2086
-$SB functions deploy $FUNCTIONS --project-ref "$REF"
+$SB functions deploy $FUNCTIONS --project-ref "$REF" --use-api
 
 echo "5/5 Pointing the web app at the project (web/.env.local, git-ignored)…"
 ANON=$($SB projects api-keys --project-ref "$REF" -o json 2>/dev/null | node -e '
