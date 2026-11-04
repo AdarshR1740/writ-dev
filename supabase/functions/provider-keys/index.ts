@@ -3,8 +3,8 @@
 
 import { handle, json, UserError } from "../_shared/cors.ts";
 import { admin, requireRole, requireUser } from "../_shared/supabase.ts";
-import { encrypt } from "../_shared/crypto.ts";
-import { verifyKey } from "../_shared/llm.ts";
+import { decrypt, encrypt } from "../_shared/crypto.ts";
+import { listModels, verifyKey } from "../_shared/llm.ts";
 import type { Provider } from "../_shared/models.ts";
 
 const PROVIDERS: Provider[] = ["anthropic", "openai", "gemini", "local"];
@@ -79,6 +79,21 @@ Deno.serve(handle(async (req) => {
       .from("provider_keys").delete().eq("company_id", companyId).eq("provider", provider);
     if (error) throw error;
     return json({ ok: true });
+  }
+
+  // The models this provider's key can use, for the model pickers in AI settings.
+  if (action === "models") {
+    const { data: row } = await admin
+      .from("provider_keys").select("base_url, provider_key_secrets(ciphertext, iv)")
+      .eq("company_id", companyId).eq("provider", provider).maybeSingle();
+    const secret = row && (Array.isArray(row.provider_key_secrets) ? row.provider_key_secrets[0] : row.provider_key_secrets);
+    if (!row || !secret) throw new UserError("Add a key for this provider first.");
+    try {
+      return json({ models: await listModels(provider, await decrypt(secret.ciphertext, secret.iv), row.base_url) });
+    } catch (err) {
+      if (err instanceof UserError) throw err;
+      throw new UserError("Couldn't get the model list from the provider. You can type a model ID instead.", 502);
+    }
   }
 
   throw new UserError("Unknown action.");

@@ -4,7 +4,7 @@ import { BudgetSection } from "../components/Budget";
 import { callFunction, errorMessage, supabase } from "../lib/supabase";
 import { useCompany } from "../lib/session";
 import { must, useLoad } from "../lib/useLoad";
-import { formatCost, formatDate } from "../lib/format";
+import { formatCost } from "../lib/format";
 import {
   DEFAULT_MODELS,
   PROVIDER_LABELS,
@@ -100,15 +100,8 @@ export function AiSettingsPage() {
   const active = data.keys.find((k) => k.is_active)?.provider ?? null;
   const monthCost = data.usage.reduce((sum, u) => sum + Number(u.cost_usd ?? 0), 0);
   const unpriced = data.usage.some((u) => u.cost_usd === null);
-  // Cost per piece this month, highest first (for agencies billing by piece).
-  const byPiece = Object.values(data.usage.reduce<Record<string, { id: string; code: string; title: string; runs: number; cost: number; unpriced: boolean }>>((acc, u) => {
-    if (!u.piece_id || !u.pieces) return acc;
-    const row = acc[u.piece_id] ??= { id: u.piece_id, code: u.pieces.code, title: u.pieces.title, runs: 0, cost: 0, unpriced: false };
-    row.runs += 1;
-    row.cost += Number(u.cost_usd ?? 0);
-    row.unpriced ||= u.cost_usd === null;
-    return acc;
-  }, {})).sort((a, b) => b.cost - a.cost);
+  // This month's cost per piece, highest first (for agencies billing by piece), each expandable to its tasks.
+  const groups = usageByPiece(data.usage);
 
   return (
     <div className="page page-narrow">
@@ -190,28 +183,20 @@ export function AiSettingsPage() {
               Each kind of task uses the cheapest model that does it well. Override a default only if you have a reason to.
             </p>
           </div>
-          <table className="plain">
-            <thead><tr><th>Task</th><th>Model</th></tr></thead>
-            <tbody>
-              {TASKS.map((t) => (
-                <ModelRow
-                  key={`${active}-${t}`}
-                  task={t}
-                  fallback={DEFAULT_MODELS[active][t] ?? null}
-                  current={data.overrides.find((o) => o.provider === active && o.task_type === t)?.model ?? null}
-                  editable={isEditor}
-                  busy={busy}
-                  onSave={(model) => act(async () => {
-                    if (model) {
-                      must(await supabase.from("model_overrides").upsert({ company_id: company.id, provider: active, task_type: t, model }).select("model"));
-                    } else {
-                      must(await supabase.from("model_overrides").delete().eq("company_id", company.id).eq("provider", active).eq("task_type", t).select("model"));
-                    }
-                  })}
-                />
-              ))}
-            </tbody>
-          </table>
+          <ModelsTable
+            provider={active}
+            companyId={company.id}
+            overrides={data.overrides}
+            editable={isEditor}
+            busy={busy}
+            onSave={(t, model) => act(async () => {
+              if (model) {
+                must(await supabase.from("model_overrides").upsert({ company_id: company.id, provider: active, task_type: t, model }).select("model"));
+              } else {
+                must(await supabase.from("model_overrides").delete().eq("company_id", company.id).eq("provider", active).eq("task_type", t).select("model"));
+              }
+            })}
+          />
         </section>
       )}
 
@@ -226,54 +211,144 @@ export function AiSettingsPage() {
               : `${data.usage.length} runs, ${formatCost(monthCost)}${unpriced ? " plus runs on models we can't price" : ""}. Your provider's bill is the final word.`}
           </p>
         </div>
-        {byPiece.length > 0 && (
-          <div className="stack" style={{ gap: 6 }}>
-            <h3>By piece</h3>
-            <table className="plain">
-              <thead><tr><th>Piece</th><th>Runs</th><th>Cost</th></tr></thead>
-              <tbody>
-                {byPiece.slice(0, 10).map((p) => (
-                  <tr key={p.id}>
-                    <td><Link to={`/pieces/${p.id}`}><span className="id">{p.code}</span> {p.title}</Link></td>
-                    <td>{p.runs}</td>
-                    <td>${p.cost.toFixed(2)}{p.unpriced ? "+" : ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {groups.length > 0 && (
+          <div className="usage-list">
+            <div className="usage-row usage-head" aria-hidden="true">
+              <span>Piece</span><span>Runs</span><span>Tokens in / out</span><span>Cost</span>
+            </div>
+            {groups.map((g) => (
+              <details key={g.id} className="usage-group">
+                <summary className="usage-row">
+                  <span className="usage-title">
+                    {g.code ? <><span className="id">{g.code}</span> {g.title}</> : g.title}
+                  </span>
+                  <span>{g.runs}</span>
+                  <span className="mono">{g.input.toLocaleString()} / {g.output.toLocaleString()}</span>
+                  <span>{money(g.cost, g.unpriced)}</span>
+                </summary>
+                <div className="usage-body">
+                  <table className="plain">
+                    <thead><tr><th>Task</th><th>Model</th><th>Runs</th><th>Tokens in / out</th><th>Cost</th></tr></thead>
+                    <tbody>
+                      {g.tasks.map((t) => (
+                        <tr key={t.task}>
+                          <td>{TASK_NAMES[t.task] ?? t.task}</td>
+                          <td className="mono">{[...t.models].join(", ")}</td>
+                          <td>{t.runs}</td>
+                          <td className="mono">{t.input.toLocaleString()} / {t.output.toLocaleString()}</td>
+                          <td>{money(t.cost, t.unpriced)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {g.pieceId && <p className="small"><Link to={`/pieces/${g.pieceId}`}>Open this piece</Link></p>}
+                </div>
+              </details>
+            ))}
           </div>
-        )}
-        {data.usage.length > 0 && (
-          <table className="plain">
-            <thead><tr><th>When</th><th>Task</th><th>Model</th><th>Tokens in / out</th><th>Cost</th></tr></thead>
-            <tbody>
-              {data.usage.slice(0, 25).map((u, i) => (
-                <tr key={i}>
-                  <td>{formatDate(u.created_at)}</td>
-                  <td>{TASK_NAMES[u.task] ?? u.task}</td>
-                  <td className="mono">{u.model}</td>
-                  <td className="mono">{u.input_tokens.toLocaleString()} / {u.output_tokens.toLocaleString()}</td>
-                  <td>{u.cost_usd === null ? "—" : `$${Number(u.cost_usd).toFixed(3)}`}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         )}
       </section>
     </div>
   );
 }
 
-function ModelRow({ task, fallback, current, editable, busy, onSave }: {
+const money = (cost: number, unpriced: boolean) => `$${cost.toFixed(cost < 0.1 ? 3 : 2)}${unpriced ? "+" : ""}`;
+
+interface UsageGroup {
+  id: string;
+  pieceId: string | null;
+  code: string | null;
+  title: string;
+  runs: number;
+  input: number;
+  output: number;
+  cost: number;
+  unpriced: boolean;
+  tasks: { task: string; models: Set<string>; runs: number; input: number; output: number; cost: number; unpriced: boolean }[];
+}
+
+/** This month's runs grouped by piece (most expensive first), each with a per-task breakdown. */
+function usageByPiece(usage: UsageRow[]): UsageGroup[] {
+  const groups = new Map<string, UsageGroup>();
+  for (const u of usage) {
+    const id = u.piece_id ?? "none";
+    const g = groups.get(id) ?? {
+      id,
+      pieceId: u.piece_id,
+      code: u.pieces?.code ?? null,
+      title: u.piece_id ? (u.pieces?.title ?? "Piece") : "Not tied to a piece (house file, Ask Writ)",
+      runs: 0, input: 0, output: 0, cost: 0, unpriced: false, tasks: [],
+    };
+    let t = g.tasks.find((x) => x.task === u.task);
+    if (!t) g.tasks.push(t = { task: u.task, models: new Set(), runs: 0, input: 0, output: 0, cost: 0, unpriced: false });
+    for (const row of [g, t]) {
+      row.runs += 1;
+      row.input += u.input_tokens;
+      row.output += u.output_tokens;
+      row.cost += Number(u.cost_usd ?? 0);
+      row.unpriced ||= u.cost_usd === null;
+    }
+    t.models.add(u.model);
+    groups.set(id, g);
+  }
+  const out = [...groups.values()];
+  for (const g of out) g.tasks.sort((a, b) => b.cost - a.cost);
+  return out.sort((a, b) => b.cost - a.cost);
+}
+
+function ModelsTable({ provider, companyId, overrides, editable, busy, onSave }: {
+  provider: Provider;
+  companyId: string;
+  overrides: { provider: Provider; task_type: TaskType; model: string }[];
+  editable: boolean;
+  busy: boolean;
+  onSave: (task: TaskType, model: string | null) => void;
+}) {
+  // The provider's own list of models for this key. Editors only, since listing needs the stored key.
+  const { data: models, error: listError, loading } = useLoad(
+    async () => editable ? (await callFunction<{ models: string[] }>("provider-keys", { action: "models", company_id: companyId, provider })).models : null,
+    [companyId, provider, editable],
+  );
+  return (
+    <>
+      {editable && listError && <p className="small muted">Couldn't load the model list ({listError}). Type a model ID instead.</p>}
+      <table className="plain">
+        <thead><tr><th>Task</th><th>Model</th></tr></thead>
+        <tbody>
+          {TASKS.map((t) => (
+            <ModelRow
+              key={`${provider}-${t}`}
+              task={t}
+              fallback={DEFAULT_MODELS[provider][t] ?? null}
+              current={overrides.find((o) => o.provider === provider && o.task_type === t)?.model ?? null}
+              models={models ?? null}
+              loadingModels={loading && editable}
+              editable={editable}
+              busy={busy}
+              onSave={(model) => onSave(t, model)}
+            />
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+function ModelRow({ task, fallback, current, models, loadingModels, editable, busy, onSave }: {
   task: TaskType;
   fallback: string | null;
   current: string | null;
+  models: string[] | null;
+  loadingModels: boolean;
   editable: boolean;
   busy: boolean;
   onSave: (model: string | null) => void;
 }) {
   const [value, setValue] = useState(current ?? "");
   const dirty = value.trim() !== (current ?? "");
+  const label = `Model for ${TASK_TYPE_LABELS[task].name}`;
+  // The list, plus the saved model if the provider no longer lists it, so it never silently disappears.
+  const options = models ? (current && !models.includes(current) ? [current, ...models] : models) : null;
   return (
     <tr>
       <td>
@@ -281,10 +356,22 @@ function ModelRow({ task, fallback, current, editable, busy, onSave }: {
         <div className="small muted">{TASK_TYPE_LABELS[task].detail}</div>
       </td>
       <td>
-        {editable ? (
+        {editable && (options || loadingModels) ? (
+          <select
+            className="mono"
+            aria-label={label}
+            value={current ?? ""}
+            disabled={busy || loadingModels}
+            onChange={(e) => onSave(e.target.value || null)}
+            style={{ width: "100%", maxWidth: 360 }}
+          >
+            <option value="">{loadingModels ? "Loading models…" : fallback ? `Default (${fallback})` : "Choose a model…"}</option>
+            {(options ?? []).map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        ) : editable ? (
           <form className="row" onSubmit={(e) => { e.preventDefault(); onSave(value.trim() || null); }}>
             <input type="text" className="mono" value={value} onChange={(e) => setValue(e.target.value)}
-              placeholder={fallback ?? "Required: enter a model ID"} aria-label={`Model for ${TASK_TYPE_LABELS[task].name}`} style={{ flex: "1 1 180px", width: "auto" }} />
+              placeholder={fallback ?? "Required: enter a model ID"} aria-label={label} style={{ flex: "1 1 180px", width: "auto" }} />
             {dirty && <button type="submit" className="btn btn-small btn-primary" disabled={busy}>{value.trim() ? "Save" : "Use default"}</button>}
           </form>
         ) : (

@@ -4,7 +4,8 @@ import { must, useLoad } from "../lib/useLoad";
 import { formatCost } from "../lib/format";
 import type { BriefBullet, CheckResult, Contract, FactFlag, Piece, ResearchItem, Section } from "../lib/types";
 import { ResearchStep } from "./ResearchStep";
-import { AiAction, ErrorText, Loading } from "./ui";
+import { AiAction, CopyButton, ErrorText, Loading } from "./ui";
+import { HUMANIZER_PROMPT } from "../lib/sections";
 import { normalise, type Recipe } from "../lib/recipes";
 
 const STATUS_LABEL: Record<Section["status"], string> = {
@@ -360,6 +361,20 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
                 payload={{ task: "contract_check", section_id: section.id }} onDone={onChanged} />
               {section.contract_check && <ContractResults results={section.contract_check.results} />}
             </div>}
+
+            <div className="check">
+              <div className="check-head">
+                <strong>Humanizer</strong>
+                <span className="small muted">Make the text sound less machine-written, in your own AI tool. Writ never rewrites your sentences.</span>
+              </div>
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                {text.trim() && <CopyButton text={`${HUMANIZER_PROMPT}\n\n<text>\n${text}\n</text>`} label="Copy prompt + this section" />}
+                <CopyButton text={HUMANIZER_PROMPT} label="Copy prompt only" />
+              </div>
+              <p className="small muted">
+                Paste it into ChatGPT, Claude or Gemini, then paste the result back into the box above. Check numbers and names before you keep it.
+              </p>
+            </div>
 
             {recipe.writing.ai_draft && <details className="helper">
               <summary>Rather have AI draft it? (not recommended)</summary>

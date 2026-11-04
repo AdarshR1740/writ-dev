@@ -262,7 +262,36 @@ export const formatMaterial = (formatName: string): MaterialCopy => ({
   linksHelp: "Paste the most relevant links, one per line. LinkedIn, X and similar sites block fetching: paste those posts as text instead.",
 });
 
-export const VOICE_MEMORY_PROMPT = `TASK
+/** For the writing stage: the writer runs it in their own AI tool, then pastes the result back. */
+export const HUMANIZER_PROMPT = `TASK
+Edit the text below so it reads like a person wrote it, without changing what it says.
+
+STEPS
+1. Read the whole text first.
+2. Find the places that sound machine-written (see the list below).
+3. Rewrite only those places. Leave sentences that already sound natural exactly as they are.
+4. Check that every fact, number, name, date and quote is unchanged.
+
+WHAT TO FIX
+- Filler openers and transitions: "In today's fast-paced world", "It's important to note", "Moreover", "Furthermore", "In conclusion".
+- The "it's not just X, it's Y" pattern, and other balanced, formula-like sentences.
+- Stock words: delve, leverage, unlock, elevate, robust, seamless, landscape, tapestry, game-changer.
+- Lists of exactly three adjectives or examples used as padding.
+- Sentences that all have the same length and rhythm. Mix short and long ones.
+- Vague claims. Replace them with the specific detail already in the text. Do not invent new detail.
+- Too many em dashes, colons and rhetorical questions.
+
+RULES
+- Keep the writer's meaning, argument, order and point of view.
+- Do not add facts, examples, numbers or names. Do not remove any.
+- Keep the same length, give or take 10%.
+- Use plain words. Prefer concrete nouns and active verbs.
+- If a sentence is already fine, do not touch it.
+
+OUTPUT FORMAT
+Return only the edited text, with no introduction, no notes and no list of changes.`;
+
+export const VOICE_MEMORY_PROMPT =`TASK
 From our past conversations and any writing of mine you can see, list the writing preferences I have shown
 or told you about, as short rules I can reuse on any piece.
 

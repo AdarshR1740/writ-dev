@@ -407,6 +407,46 @@ export async function verifyKey(provider: Provider, apiKey: string, baseUrl?: st
   if (!res.ok) throw new UserError("Couldn't reach the provider to check the key. Try again.", 502);
 }
 
+/** The model IDs a key can use, from the provider's own list. Chat models only; newest first where the provider says. */
+export async function listModels(provider: Provider, apiKey: string, baseUrl?: string | null): Promise<string[]> {
+  const timeout = AbortSignal.timeout(20_000);
+  if (provider === "anthropic") {
+    const client = new Anthropic({ apiKey, maxRetries: 1 });
+    const ids: string[] = [];
+    for await (const m of client.models.list({ limit: 100 })) ids.push(m.id);
+    return ids;
+  }
+  if (provider === "openai") {
+    const res = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${apiKey}` }, signal: timeout });
+    if (!res.ok) throw new UserError(`OpenAI answered ${res.status} when listing models.`, 502);
+    const body = await res.json() as { data?: { id: string }[] };
+    return (body.data ?? []).map((m) => m.id)
+      .filter((id) => /^(gpt-|o\d|chatgpt-)/.test(id) && !/(audio|realtime|transcribe|tts|image|embedding|moderation|instruct|search)/.test(id))
+      .sort().reverse();
+  }
+  if (provider === "gemini") {
+    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", {
+      headers: { "x-goog-api-key": apiKey },
+      signal: timeout,
+    });
+    if (!res.ok) throw new UserError(`Google answered ${res.status} when listing models.`, 502);
+    const body = await res.json() as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
+    return (body.models ?? [])
+      .filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
+      .map((m) => m.name.replace(/^models\//, ""))
+      .sort().reverse();
+  }
+  if (!baseUrl) throw new UserError("The local model has no address. Add it again in AI settings.");
+  await assertPublicHost(new URL(baseUrl).hostname);
+  const res = await fetch(localEndpoint(baseUrl, "/models"), {
+    signal: timeout,
+    headers: apiKey && apiKey !== "none" ? { Authorization: `Bearer ${apiKey}` } : {},
+  });
+  if (!res.ok) throw new UserError(`Your local model answered ${res.status} when listing models.`, 502);
+  const body = await res.json() as { data?: { id: string }[] };
+  return (body.data ?? []).map((m) => m.id).sort();
+}
+
 // ---------------------------------------------------------------------------
 // Spending controls
 // ---------------------------------------------------------------------------

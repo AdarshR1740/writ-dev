@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { callFunction, errorMessage } from "../lib/supabase";
-import { formatCost } from "../lib/format";
-import type { Estimate } from "../lib/types";
 
 export function ErrorText({ children }: { children: ReactNode }) {
   if (!children) return null;
@@ -96,8 +94,8 @@ export function PromptHelper({ title, prompt, children }: { title: string; promp
 }
 
 /**
- * Two-step AI action: first shows which model will run and what it should
- * cost, then runs on confirmation.
+ * An AI action: one click runs it. Token use and cost are still recorded on the server for every run,
+ * and the company's budget limit is enforced there; nothing is asked first.
  */
 export function AiAction<T>({
   label,
@@ -118,92 +116,45 @@ export function AiAction<T>({
   onDone: (result: T) => void;
   fn?: string;
   primary?: boolean;
-  /** Several calls in one go (for example one per source): estimated together, run one after another. */
+  /** Several calls in one go (for example one per source), run one after another. */
   payloads?: Record<string, unknown>[];
   /** Combines the results of `payloads` into the one result `onDone` receives. */
   merge?: (results: T[]) => T;
 }) {
-  const [estimate, setEstimate] = useState<Estimate | null>(null);
-  const [busy, setBusy] = useState<"estimate" | "run" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const batch = payloads && payloads.length > 1 && merge ? payloads : null;
 
-  async function check() {
-    setBusy("estimate");
-    setError(null);
-    try {
-      if (batch) {
-        const all = await Promise.all(batch.map((p) => callFunction<Estimate>(fn, { ...p, mode: "estimate" })));
-        const cost = all.some((e) => e.cost_usd === null) ? null : all.reduce((sum, e) => sum + (e.cost_usd ?? 0), 0);
-        const first = all[0];
-        setEstimate({
-          ...first,
-          cost_usd: cost,
-          month_after: first.month_spent != null && cost !== null ? first.month_spent + cost : first.month_after,
-        });
-      } else {
-        setEstimate(await callFunction<Estimate>(fn, { ...(payloads?.[0] ?? payload), mode: "estimate" }));
-      }
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function run() {
-    setBusy("run");
+    setBusy(true);
     setError(null);
     try {
       let result: T;
       if (batch) {
         const results: T[] = [];
-        for (const p of batch) results.push(await callFunction<T>(fn, p));
+        for (const [i, p] of batch.entries()) {
+          setProgress(`${i + 1} of ${batch.length}`);
+          results.push(await callFunction<T>(fn, p));
+        }
         result = merge!(results);
       } else {
         result = await callFunction<T>(fn, payloads?.[0] ?? payload);
       }
-      setEstimate(null);
       onDone(result);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
-      setBusy(null);
+      setBusy(false);
+      setProgress(null);
     }
   }
 
-  if (estimate) {
-    return (
-      <div className="stack" style={{ gap: 8 }}>
-        <p className="small">
-          Runs on <span className="mono">{estimate.model}</span>, {formatCost(estimate.cost_usd)} (estimate).
-          {estimate.month_budget != null && estimate.month_spent != null && (
-            <span className="muted"> This month: ${estimate.month_spent.toFixed(2)} of ${estimate.month_budget.toFixed(2)}.</span>
-          )}
-        </p>
-        {estimate.month_budget != null && estimate.month_after != null && estimate.month_after > estimate.month_budget && (
-          <p className="notice small">
-            This run would take the month past its ${estimate.month_budget.toFixed(2)} budget.
-            {estimate.budget_hard_limit ? " It can still run; after that, AI runs stop until next month or until an editor raises the budget." : ""}
-          </p>
-        )}
-        <div className="row">
-          <button type="button" className="btn btn-primary" onClick={run} disabled={busy !== null}>
-            {busy === "run" ? "Working…" : "Run"}
-          </button>
-          <button type="button" className="btn btn-quiet" onClick={() => setEstimate(null)} disabled={busy !== null}>
-            Cancel
-          </button>
-        </div>
-        <ErrorText>{error}</ErrorText>
-      </div>
-    );
-  }
   return (
     <div className="stack" style={{ gap: 8 }}>
       <div className="row" style={{ gap: 10 }}>
-        <button type="button" className={`btn${primary ? " btn-primary" : ""}`} onClick={check} disabled={disabled || busy !== null}>
-          {busy === "estimate" ? "Checking…" : label}
+        <button type="button" className={`btn${primary ? " btn-primary" : ""}`} onClick={run} disabled={disabled || busy}>
+          {busy ? `Working…${progress ? ` ${progress}` : ""}` : label}
         </button>
         {disabled && reason && <span className="small muted disabled-reason">{reason}</span>}
       </div>

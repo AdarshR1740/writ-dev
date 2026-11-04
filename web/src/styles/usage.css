@@ -1,0 +1,15 @@
+/* Usage this month: one collapsed row per piece, expandable to its tasks. */
+.usage-list { display: grid; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }
+.usage-row { display: grid; grid-template-columns: minmax(0, 1fr) 56px 150px 80px; gap: 12px; align-items: center; padding: 10px 14px; font-size: 14px; }
+.usage-head { font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--rule); }
+details.usage-group + details.usage-group, .usage-head + details.usage-group { border-top: 1px solid var(--rule); }
+details.usage-group summary { cursor: pointer; list-style: none; }
+details.usage-group summary::-webkit-details-marker { display: none; }
+details.usage-group summary .usage-title::before { content: "▸"; display: inline-block; width: 16px; color: var(--faint); }
+details.usage-group[open] summary .usage-title::before { content: "▾"; }
+.usage-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-body { padding: 0 14px 12px 30px; display: grid; gap: 8px; overflow-x: auto; }
+@media (max-width: 720px) {
+  .usage-row { grid-template-columns: minmax(0, 1fr) 70px; }
+  .usage-row > :nth-child(2), .usage-row > :nth-child(3) { display: none; }
+}

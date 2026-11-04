@@ -391,7 +391,7 @@ These figures come from rate-guide blogs, so they are rough. The buyer's real qu
 - **Search runs on the same key** by default (§12.6).
 
 ### 14.5 Decision: cost visibility and model routing by task (user decisions)
-- **Estimate and actual.** Before each step runs, the tool shows an estimated cost. After the piece, it shows the actual cost, plus a monthly total per company.
+- **Estimate and actual.** ~~Before each step runs, the tool shows an estimated cost.~~ **Changed (user decision):** AI actions now run on one click, with no estimate step, because the extra click was friction. Every run still records its tokens and cost, and the monthly budget (including the hard limit) is still enforced on the server when a run starts. The usage section shows actual cost per piece, expandable to a per-task breakdown. Ask Writ still shows its per-question cost in the panel.
 - **The main lever is choosing models by task type**, so that each task uses the cheapest model that does it well. Proposed starting mapping:
 
   | Task type | Needs | Model tier |

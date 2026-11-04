@@ -3,7 +3,7 @@ import { callFunction, errorMessage, supabase } from "../lib/supabase";
 import { useCompany, useSession } from "../lib/session";
 import { useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
-import { DOC_SECTIONS, DATA_PROMPT, FORMAT_PROMPT, INSIGHT_PROMPT, VOICE_MEMORY_PROMPT } from "../lib/sections";
+import { DOC_SECTIONS, DATA_PROMPT, FORMAT_PROMPT, HUMANIZER_PROMPT, INSIGHT_PROMPT, VOICE_MEMORY_PROMPT } from "../lib/sections";
 import { CopyButton, ErrorText, Lede, Loading } from "../components/ui";
 
 interface Unit {
@@ -56,6 +56,15 @@ const OWN_TOOL: Entry[] = [
     tier: "write",
     receives: ["Examples you share with your own AI tool"],
     units: [{ label: "Prompt", text: FORMAT_PROMPT("Example format") }],
+  },
+  {
+    id: "own-humanizer",
+    group: "Run in your own AI tool",
+    title: "Humanizer",
+    when: "Shown on the Writing step. Copy it with your section's text, run it in your own AI tool, and paste the result back.",
+    tier: "write",
+    receives: ["The section text you copy along with it"],
+    units: [{ label: "Prompt", text: HUMANIZER_PROMPT }],
   },
   {
     id: "own-voice-memory",
