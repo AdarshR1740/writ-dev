@@ -43,10 +43,6 @@ export function HistoryPage() {
 
   if (error) return <ErrorText>{error}</ErrorText>;
   if (!data) return <Loading />;
-  const label = (id: string) => {
-    const p = data.pieces.find((x) => x.id === id);
-    return p ? `${p.code} v${p.version}` : "deleted";
-  };
   const dueCount = groups.filter((g) => g.due).length;
 
   return (
@@ -99,9 +95,9 @@ export function HistoryPage() {
                     </div>
                   </td>
                   <td className="small" data-label="Came from / made into">
-                    <div>
-                    {from.map((l, i) => <div key={i}>{l.kind} from <span className="id">{label(l.from_piece)}</span></div>)}
-                    {into.map((l, i) => <div key={`o${i}`}>{l.kind} into <span className="id">{label(l.to_piece)}</span></div>)}
+                    <div className="stack" style={{ gap: 4 }}>
+                    <Related links={from} dir="from" pieces={data.pieces} />
+                    <Related links={into} dir="into" pieces={data.pieces} />
                     {!from.length && !into.length && <span className="faint">—</span>}
                     {sourceUpdated && <span className="tag flag" title="A source of this piece has a newer version">source updated</span>}
                     </div>
@@ -118,6 +114,35 @@ export function HistoryPage() {
       )}
       {compare && <CompareVersions versions={data.pieces.filter((p) => p.code === compare).sort((a, b) => a.version - b.version)} onClose={() => setCompare(null)} />}
     </div>
+  );
+}
+
+const KIND_WORD: Record<string, [string, string]> = {
+  split: ["Split from", "Split into"],
+  adapt: ["Adapted from", "Adapted into"],
+  combine: ["Combined from", "Combined into"],
+};
+
+/** One line per kind of link: a single piece is a link; several fold into a count that opens the list. */
+function Related({ links, dir, pieces }: { links: PieceLink[]; dir: "from" | "into"; pieces: Row[] }) {
+  const kinds = [...new Set(links.map((l) => l.kind))];
+  return (
+    <>
+      {kinds.map((kind) => {
+        const targets = links.filter((l) => l.kind === kind)
+          .map((l) => pieces.find((p) => p.id === (dir === "from" ? l.from_piece : l.to_piece)))
+          .filter((p): p is Row => Boolean(p));
+        const word = (KIND_WORD[kind] ?? [kind, kind])[dir === "from" ? 0 : 1];
+        const item = (p: Row) => <Link key={p.id} to={`/pieces/${p.id}`} className="id" title={p.title}>{p.code}</Link>;
+        if (targets.length === 1) return <div key={kind} className="related"><span className="faint">{word}</span> {item(targets[0])}</div>;
+        return (
+          <details key={kind} className="related">
+            <summary><span className="faint">{word}</span> {targets.length} pieces</summary>
+            <ul>{targets.map((p) => <li key={p.id}>{item(p)}</li>)}</ul>
+          </details>
+        );
+      })}
+    </>
   );
 }
 

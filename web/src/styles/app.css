@@ -1015,3 +1015,8 @@ ol.structure-list li { display: grid; grid-template-columns: 11rem 1fr auto; gap
 .format-group[open] > summary { border-bottom: 1px solid var(--rule); }
 .format-group .checklist { border: 0; border-radius: 0; }
 .clip { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* History: what a piece was made from / into */
+.related summary { cursor: pointer; }
+.related ul { list-style: none; margin: 4px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--rule); display: grid; gap: 4px; }
+.related a { overflow-wrap: anywhere; }
