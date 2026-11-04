@@ -742,3 +742,28 @@ Instagram caption, Instagram carousel, LinkedIn carousel, X thread, video script
   becomes the current step, and a banner offers "Continue to sign-off". Approval is sign-off's job, not writing's.
   Reopening a section makes Writing current again. The stored stage stays `writing` until sign-off, so no data
   changes: only what the stage bar shows.
+
+## 23. Section structure and AI fixes for SEO/GEO gaps (user requests)
+
+- **Problem:** with little human input, a piece came out as heading, short paragraph, heading, short paragraph.
+  The outline only held a heading and a one-line purpose, the brief was fragments, and drafting was told to write
+  plain prose, so nothing asked for lists, tables, steps or short standalone answers that search and answer engines
+  reward.
+- **Improve structure (Outline step).** After the headings are in, "Improve structure" plans each section as an
+  ordered list of blocks (short answer, paragraph, bullets, steps, table, example, figure, subheading, question and
+  answer, expert quote, takeaway), each with a one-line note about what goes in it. The AI reads the brief,
+  contract, analysis, approved research, format profile and the search landscape, and does not touch headings or
+  order. The writer edits every block and saves; nothing is stored until they do (`piece_sections.structure`).
+- **The structure is used downstream.** The section brief covers each planned block; the optional AI draft builds
+  the section from the blocks (lists, numbered steps, markdown tables, `###` subheads) instead of plain prose; the
+  Writing step shows the planned structure beside the section. Sections without a structure behave as before.
+- **Fix gaps with AI.** After an SEO/GEO check finds "improve" items: on the outline, "Fix with AI" proposes a
+  revised outline (headings, purposes, order, blocks) that lands in the editable draft for review and saving, never
+  directly. On the finished piece, "Suggest edits with AI" proposes small, minimal edits (replace a passage, or add
+  text at the start or end of a section) using only facts already in the text; the writer accepts or ignores each
+  one. Gaps no text edit can fix (internal links, title and meta) are skipped and the reply says so.
+- **Provenance.** An accepted edit is written to the section and recorded as `seo_fix_applied` in the editorial
+  record, because the text now contains AI-suggested wording. Editing the text also makes the section's checks
+  stale (§22). Accepting is disabled once the piece is signed off.
+- **Known limit:** the export renders paragraphs, subheads and bullet lists; a markdown table from a drafted section
+  is exported as plain text.

@@ -219,7 +219,7 @@ export const BRIEF_SYSTEM = `ROLE
 You write the brief for ONE section of a piece. The writer will write the section by hand from your bullets, so the bullets must carry content, not style.
 
 WHAT YOU RECEIVE
-- <section>: the heading, its purpose, and the contract expectations it owes.
+- <section>: the heading, its purpose, the contract expectations it owes, and sometimes its planned structure (blocks such as answer, bullets, table).
 - <outline>, <analysis>: the whole piece's plan and what the research found.
 - <section_research>: numbered approved items, [1], [2], and so on.
 
@@ -228,6 +228,7 @@ STEPS
 2. Read the approved items. Pick the facts this section needs.
 3. If the analysis shows a tension, or a company insight that contradicts the consensus, and it belongs in this section, add a bullet for it.
 4. Write 4 to 10 bullets in a sensible order. Put the "answer:" bullet first.
+5. If <section> lists a planned structure, cover each planned block with at least one bullet, in the same order. Use the block type as the label (for example "table: rows = three tools; columns = cost, setup time").
 
 BULLET RULES
 - Format: "label: content". Labels are short, such as answer, what, use, adopter, limit, cost, our view.
@@ -291,9 +292,11 @@ WHAT YOU RECEIVE
 - <section_research> (or <approved_research>): numbered approved items.
 - <core_voice>, <format_profile>, <voice_memory>: how the company writes.
 - <brief>: the bullets to follow.
+- <section> may list a planned structure: the blocks the section is made of.
 
 STEPS
 1. Follow the brief bullets in order. Every bullet must appear in the draft.
+   If a planned structure is given, build the section from its blocks in order: answer = a short standalone answer of about 40 to 60 words; bullets = a "- " list; steps = a numbered list; table = a markdown table; subheading = a "### " line; faq = the question in bold, then a short answer; example, data, quote, takeaway = a short paragraph of that kind.
 2. Open with the "answer:" bullet's point, in one or two plain sentences.
 3. For each fact or figure, use the approved item it comes from and say in the text where it comes from.
 4. Write in the company's core voice, with the habits of the format profile, and obey the voice memory.
@@ -301,8 +304,9 @@ STEPS
 RULES
 - Use only the approved research for facts and figures. Do NOT add any other number, name, date or claim.
 - Bullets without a research item are the writer's own view. Write them as that view and add no facts.
-- No heading, no preamble, no closing summary, no "In conclusion".
-- Plain prose the writer can edit.
+- No heading for the section itself (the writer adds it), no preamble, no closing summary, no "In conclusion".
+- Without a planned structure, write plain prose. With one, use only the formatting its blocks call for.
+- Never write the section as one block of prose when the structure lists several blocks.
 
 OUTPUT
 - text: the section text only.`;
@@ -808,6 +812,257 @@ async function prepareLearn(userId: string, body: Record<string, unknown>): Prom
     });
 }
 
+// ---------------------------------------------------------------------------
+// Section structure: what goes under each heading, so a section is more than a paragraph
+// ---------------------------------------------------------------------------
+
+export const BLOCK_TYPES = ["answer", "paragraph", "bullets", "steps", "table", "example", "data", "subheading", "faq", "quote", "takeaway"] as const;
+
+export const STRUCTURE_SYSTEM = `ROLE
+You plan the inside of each section of a B2B article. The outline gives each section a heading and a one-line purpose. You decide what each section is made of, so the finished article is not just "heading, paragraph, heading, paragraph".
+
+WHAT YOU RECEIVE
+- <brief>, <reader_contract>: the subject, the primary keyword and what the reader expects.
+- <analysis>, <approved_research>: what the research found, as numbered items.
+- <format_profile> (sometimes): how pieces in this format are usually organised.
+- <search_landscape>: what ranking pages cover and skip, and what people ask.
+- <outline>: the sections, numbered, with their purpose.
+
+STEPS
+1. Read the whole outline. Decide which sections carry a decision, a comparison, a process, a proof or a plain explanation.
+2. For each section, choose 3 to 6 blocks, in reading order.
+3. Give every block a "note": one line saying what goes in this block for THIS section. Name the real subject, and the research item numbers [n] it can draw on.
+4. Compare neighbouring sections. If two in a row have the same shape, change one, unless the content really calls for it.
+
+BLOCK TYPES (use exactly these words for "type")
+- answer: a short, standalone answer to the section's question (about 40 to 60 words). Usually first.
+- paragraph: explanation or argument in prose.
+- bullets: a list of parallel points.
+- steps: a numbered procedure.
+- table: a comparison. The note names the rows and the columns.
+- example: a real customer case, scenario or worked example.
+- data: a figure or finding from the research, with its source and date.
+- subheading: a smaller heading inside the section that splits it into parts. The note gives the heading text.
+- faq: a question readers ask, with a short answer. The note gives the question.
+- quote: an expert's view from the company's own insights.
+- takeaway: one sentence saying what the reader should do or remember.
+
+RULES
+- Match the block to the content: comparisons go in a table, procedures in steps, parallel points in bullets. Do not use a table or list when prose reads better.
+- A section is not made of one paragraph. Use at least one block that is not "paragraph".
+- Use "answer" first in a section whose heading is a question or a "what is / how to / which" topic.
+- Use only subjects and facts found in the brief, contract, analysis and approved research. Never invent a customer, figure or quote.
+- Do not write the content itself. Describe it.
+- Do not change the headings or the order of the sections.
+
+OUTPUT
+- sections: one entry per outline section, in the same order. Each has "position" (the section's number) and "blocks" (a list of "type" and "note").`;
+
+const blockSchema = obj({ type: { type: "string", enum: [...BLOCK_TYPES] }, note: str });
+const structureSchema = obj({ sections: list(obj({ position: { type: "integer" }, blocks: list(blockSchema) })) });
+
+function cleanBlocks(blocks: { type: string; note: string }[]): { type: string; note: string }[] {
+  return blocks.filter((b) => (BLOCK_TYPES as readonly string[]).includes(b.type) && b.note?.trim())
+    .map((b) => ({ type: b.type, note: b.note.trim() })).slice(0, 8);
+}
+
+function outlineText(secs: { position: number; heading: string; purpose: string; structure?: unknown }[], withStructure: boolean): string {
+  return secs.map((s) => {
+    const blocks = withStructure && Array.isArray(s.structure) ? (s.structure as { type: string; note: string }[]) : [];
+    return `${s.position}. ${s.heading} (${s.purpose})${blocks.map((b) => `\n   - ${b.type}: ${b.note}`).join("")}`;
+  }).join("\n");
+}
+
+async function prepareStructure(userId: string, body: Record<string, unknown>): Promise<Prepared> {
+  const piece = await pieceFor(userId, body);
+  requireStep(piece, setting<string>(piece, "outline.mode") !== "off", "Section structure");
+  if (piece.stage !== "outline") throw new UserError("Structure is planned while the outline is open.");
+  const { data: secs } = await admin.from("piece_sections").select("position, heading, purpose, structure").eq("piece_id", piece.id)
+    .order("position");
+  if (!secs?.length) throw new UserError("Save an outline first.");
+  const { data: serp } = await admin.from("research_items").select("statement").eq("piece_id", piece.id)
+    .eq("source_type", "serp").eq("status", "approved");
+  const landscape = (serp ?? []).map((r) => `- ${r.statement}`).join("\n") || "(no search-landscape items were approved)";
+  // Wiring: brief, contract, analysis, approved research, format profile, outline. No voice or memory.
+  const context = await contextFor(piece, ["brief", "contract", "analysis", "piece_items", "format_profile"]);
+  const user = `${context}\n\n<search_landscape>\n${landscape}\n</search_landscape>\n\n<outline>\n${outlineText(secs, false)}\n</outline>`;
+  return task<{ sections: { position: number; blocks: { type: string; note: string }[] }[] }>(
+    "outline_structure", "reason", piece, userId, (await promptSet(piece.company_id))("structure", STRUCTURE_SYSTEM), user, structureSchema, 2500,
+    async (data, cost, model) => {
+      const sections = secs.map((s) => ({
+        position: s.position,
+        blocks: cleanBlocks(data.sections.find((x) => x.position === s.position)?.blocks ?? []),
+      }));
+      await logEvent(piece, userId, "outline_structure_suggested", { sections: sections.length });
+      return { sections, cost_usd: cost, model };
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Fixing SEO and GEO gaps with AI
+// ---------------------------------------------------------------------------
+
+export const SEO_FIX_OUTLINE = `ROLE
+You revise an article outline so that it fixes the gaps a search (SEO) and answer-engine (GEO) review found. You change the plan, not the subject.
+
+WHAT YOU RECEIVE
+- <brief>, <reader_contract>: the subject, the primary keyword and the numbered expectations the piece owes.
+- <search_landscape>: what ranking pages cover and skip, and what people ask.
+- <gaps>: the review's "improve" items. Each has a check name, what the reviewer saw, and a suggested fix.
+- <outline>: the current sections, numbered, each with its purpose, the contract expectations it serves, and its planned blocks.
+
+STEPS
+1. Read each gap. Decide which section or sections it affects.
+2. Change only what a gap needs: a heading, a purpose, the order, a section added or removed, or the planned blocks.
+3. Keep every section that has no gap exactly as it is.
+4. Check that every contract expectation is still served by at least one section.
+
+RULES
+- Headings stay specific to the sub-topic. Never "Introduction", "Overview" or "Conclusion".
+- Never suggest keyword stuffing, repeating the keyword, or padding.
+- A title or meta gap is fixed in "reply" as a suggestion; the outline has no title.
+- Block types are: answer, paragraph, bullets, steps, table, example, data, subheading, faq, quote, takeaway. Each block has a one-line "note" saying what goes in it for this section.
+- Do not invent facts, customers or figures.
+
+OUTPUT
+- reply: 1 to 3 sentences saying what you changed and which gaps it fixes, and what you could not fix in the outline.
+- sections: the FULL revised outline. Each has "heading", "purpose", "expectations" (contract expectation numbers) and "blocks".`;
+
+export const SEO_FIX_FINAL = `ROLE
+You propose small edits to a finished article that fix the gaps a search (SEO) and answer-engine (GEO) review found. The writer reads and accepts each edit one by one.
+
+WHAT YOU RECEIVE
+- <gaps>: the review's "improve" items. Each has a check name, what the reviewer saw, and a suggested fix.
+- <piece>: the article, section by section. Each section is numbered.
+
+STEPS
+1. Read each gap. Find the place in the article it applies to.
+2. Decide whether a text edit can fix it. Gaps about internal links, publication dates you cannot know, or the title and meta text cannot be fixed by an edit: skip them.
+3. For each fixable gap, write the smallest edit that fixes it.
+
+EDIT KINDS (use exactly these words for "where")
+- replace: change a passage. "original" is the passage copied exactly from the section, word for word. "replacement" is the new passage.
+- start: add text at the beginning of the section. "original" is an empty string.
+- end: add text at the end of the section. "original" is an empty string.
+
+RULES
+- Keep the writer's wording. Change as few words as the fix needs. Never rewrite a whole paragraph.
+- Use only facts, names and numbers already in the article. Do not add any.
+- To make a section start with a direct answer, write one or two plain sentences (about 40 to 60 words) from what the section already says.
+- To make a claim stand alone, name its subject in the same sentence. To add attribution, use the source the article already mentions.
+- Do not add keywords for their own sake.
+- At most 8 edits in total.
+
+OUTPUT
+- reply: 1 or 2 sentences: what the edits fix and which gaps you skipped and why.
+- edits: a list. Each has "section" (the section number), "where", "original", "replacement", "check" (the gap's check name) and "reason" (a few words).`;
+
+const fixOutlineSchema = obj({
+  reply: str,
+  sections: list(obj({ heading: str, purpose: str, expectations: list({ type: "integer" }), blocks: list(blockSchema) })),
+});
+const fixFinalSchema = obj({
+  reply: str,
+  edits: list(obj({
+    section: { type: "integer" },
+    where: { type: "string", enum: ["replace", "start", "end"] },
+    original: str,
+    replacement: str,
+    check: str,
+    reason: str,
+  })),
+});
+
+type Gap = { check: string; label: string; evidence: string; fix: string };
+
+async function prepareSeoFix(userId: string, body: Record<string, unknown>): Promise<Prepared> {
+  const piece = await pieceFor(userId, body);
+  const scope = body.scope === "final" ? "final" : "outline";
+  requireStep(piece, scope === "outline" ? on(piece, "outline.seo_geo_check") : on(piece, "checks.seo") || on(piece, "checks.geo"),
+    "Fixing SEO and GEO gaps");
+  const { data: saved } = await admin.from("pieces").select("seo_geo_outline, seo_geo_final").eq("id", piece.id).single();
+  const result = (scope === "outline" ? saved?.seo_geo_outline : saved?.seo_geo_final) as { checks: (Gap & { status: string })[] } | null;
+  const gaps = (result?.checks ?? []).filter((c) => c.status === "improve" && c.fix);
+  if (!gaps.length) throw new UserError("Run the check first. There is nothing to improve yet.");
+  const gapText = `<gaps>\n${gaps.map((g) => `- ${g.check} (${g.label}): saw: ${g.evidence || "n/a"} | suggested fix: ${g.fix}`).join("\n")}\n</gaps>`;
+  const prompts = await promptSet(piece.company_id);
+
+  if (scope === "outline") {
+    if (piece.stage !== "outline") throw new UserError("The outline can be improved while it is open.");
+    const { data: secs } = await admin.from("piece_sections").select("position, heading, purpose, expectation_ids, structure")
+      .eq("piece_id", piece.id).order("position");
+    if (!secs?.length) throw new UserError("Save an outline first.");
+    const { data: c } = await admin.from("piece_contracts").select("expectations").eq("piece_id", piece.id).single();
+    const expectations = (c?.expectations ?? []) as { id: string }[];
+    const { data: serp } = await admin.from("research_items").select("statement").eq("piece_id", piece.id)
+      .eq("source_type", "serp").eq("status", "approved");
+    const landscape = (serp ?? []).map((r) => `- ${r.statement}`).join("\n") || "(none)";
+    const context = await contextFor(piece, ["brief", "contract"]);
+    const outline = secs.map((s) => {
+      const nums = (s.expectation_ids as string[]).map((id) => expectations.findIndex((e) => e.id === id) + 1).filter((n) => n > 0);
+      return `${outlineText([s], true)}\n   serves expectations: ${nums.join(", ") || "none"}`;
+    }).join("\n");
+    const user = `${context}\n\n<search_landscape>\n${landscape}\n</search_landscape>\n\n${gapText}\n\n<outline>\n${outline}\n</outline>`;
+    return task<{ reply: string; sections: { heading: string; purpose: string; expectations: number[]; blocks: { type: string; note: string }[] }[] }>(
+      "seo_fix_outline", "reason", piece, userId, prompts("seo_fix.outline", SEO_FIX_OUTLINE), user, fixOutlineSchema, 3000,
+      async (data, cost, model) => {
+        await logEvent(piece, userId, "seo_fix_outline_suggested", { gaps: gaps.length });
+        return {
+          reply: data.reply,
+          sections: data.sections.map((s) => ({ ...s, blocks: cleanBlocks(s.blocks) })),
+          cost_usd: cost,
+          model,
+        };
+      },
+    );
+  }
+
+  const { data: secs } = await admin.from("piece_sections").select("id, position, heading, content").eq("piece_id", piece.id).order("position");
+  const text = (secs ?? []).map((s) => `<section n="${s.position}" heading="${s.heading}">\n${s.content}\n</section>`).join("\n\n");
+  if (!text.trim()) throw new UserError("Nothing written yet.");
+  const user = `${gapText}\n\n<piece>\n# ${piece.title}\n\n${text}\n</piece>`;
+  return task<{ reply: string; edits: { section: number; where: string; original: string; replacement: string; check: string; reason: string }[] }>(
+    "seo_fix_final", "reason", piece, userId, prompts("seo_fix.final", SEO_FIX_FINAL), user, fixFinalSchema, 3000,
+    async (data, cost, model) => {
+      // Keep only edits that can be applied: a known section, and for "replace" a passage that is really there.
+      const edits = data.edits.flatMap((e) => {
+        const s = secs?.find((x) => x.position === e.section);
+        if (!s || !e.replacement.trim()) return [];
+        if (e.where === "replace" && (!e.original || !s.content.includes(e.original) || e.original === e.replacement)) return [];
+        return [{ ...e, section_id: s.id, heading: s.heading }];
+      }).slice(0, 8);
+      await logEvent(piece, userId, "seo_fix_final_suggested", { gaps: gaps.length, edits: edits.length });
+      return { reply: data.reply, edits, cost_usd: cost, model };
+    },
+  );
+}
+
+/** Applies one accepted edit to a section and records that the text now contains AI-suggested wording. No model call. */
+export async function applySeoFix(userId: string, body: Record<string, unknown>) {
+  const { piece, section } = await sectionFor(userId, body);
+  if (piece.stage === "done") throw new UserError("This piece is signed off. Revise it to change the text.");
+  const where = String(body.where ?? "");
+  const original = String(body.original ?? "");
+  const replacement = String(body.replacement ?? "");
+  if (!replacement.trim()) throw new UserError("Nothing to add.");
+  let content: string;
+  if (where === "replace") {
+    if (!original || !section.content.includes(original)) throw new UserError("That passage has changed since the suggestion. Run the fix again.");
+    content = section.content.replace(original, () => replacement);
+  } else if (where === "start") {
+    content = `${replacement.trim()}\n\n${section.content.replace(/^\s+/, "")}`;
+  } else if (where === "end") {
+    content = `${section.content.replace(/\s+$/, "")}\n\n${replacement.trim()}`;
+  } else {
+    throw new UserError("Unknown edit.");
+  }
+  const { error } = await admin.from("piece_sections").update({ content }).eq("id", section.id);
+  if (error) throw error;
+  await logEvent(piece, userId, "seo_fix_applied", { section: section.id, where, check: String(body.check ?? "") });
+  return { content };
+}
+
 export const WRITING_TASKS: Record<string, (userId: string, body: Record<string, unknown>) => Promise<Prepared>> = {
   analysis: prepareAnalysis,
   outline_suggest: prepareOutline,
@@ -818,5 +1073,7 @@ export const WRITING_TASKS: Record<string, (userId: string, body: Record<string,
   contract_check: prepareContractCheck,
   learn_voice: prepareLearn,
   seo_geo_check: prepareSeoGeo,
+  outline_structure: prepareStructure,
+  seo_fix: prepareSeoFix,
   repurpose_plan: prepareRepurpose,
 };

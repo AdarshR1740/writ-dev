@@ -294,6 +294,8 @@ export interface Section {
   grammar_check: { checked_at: string; rev: number; found: number } | null;
   /** Goes up by one each time the text changes; a check is current only while its rev matches. */
   content_rev: number;
+  /** What the section is made of, planned in the outline. */
+  structure: Block[] | null;
   updated_at: string;
 }
 
@@ -339,3 +341,24 @@ export interface LeaderVoice {
   profile: string;
   updated_at: string;
 }
+
+export type BlockType = "answer" | "paragraph" | "bullets" | "steps" | "table" | "example" | "data" | "subheading" | "faq" | "quote" | "takeaway";
+
+export interface Block {
+  type: BlockType;
+  note: string;
+}
+
+export const BLOCK_LABELS: Record<BlockType, string> = {
+  answer: "Short answer",
+  paragraph: "Paragraph",
+  bullets: "Bullet list",
+  steps: "Numbered steps",
+  table: "Table",
+  example: "Example or case",
+  data: "Figure or finding",
+  subheading: "Subheading",
+  faq: "Question and answer",
+  quote: "Expert quote",
+  takeaway: "Takeaway",
+};

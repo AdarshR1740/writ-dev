@@ -150,7 +150,7 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
         {!contractCheck && unwritten.length > 0 && <p className="notice info small">Write every section first: {unwritten.map((s) => s.heading).join(", ")}.</p>}
 
         {(recipe.checks.seo || recipe.checks.geo) && (
-          <SeoGeoPanel piece={piece} scope="final" result={piece.seo_geo_final} disabled={unwritten.length > 0 || done} reason={done ? undefined : "Write every section first"} onDone={onChanged} />
+          <SeoGeoPanel piece={piece} scope="final" result={piece.seo_geo_final} disabled={unwritten.length > 0 || done} reason={done ? undefined : "Write every section first"} onDone={onChanged} onEdited={() => { reload(); onChanged(); }} />
         )}
 
         <MemoryPanel piece={piece} disabled={!data.sections.some((s) => s.content.trim())} reason="Write something first" onDone={onChanged} />

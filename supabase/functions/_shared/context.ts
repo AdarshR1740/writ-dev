@@ -70,6 +70,7 @@ export interface SectionRow {
   content: string;
   ai_draft: string | null;
   content_rev: number;
+  structure: { type: string; note: string }[] | null;
 }
 
 export async function loadSection(sectionId: string): Promise<SectionRow> {
@@ -173,7 +174,8 @@ Audience notes: ${piece.audience_notes || "(none)"}${
 Heading: ${section.heading}
 Purpose: ${section.purpose || "(not given)"}
 Contract expectations this section owes:
-${owed.map((e) => `- ${e.text}`).join("\n") || "(none assigned)"}
+${owed.map((e) => `- ${e.text}`).join("\n") || "(none assigned)"}${
+      section.structure?.length ? `\nPlanned structure, in order:\n${section.structure.map((b) => `- ${b.type}: ${b.note}`).join("\n")}` : ""}
 </section>`);
   }
   return parts.join("\n\n");

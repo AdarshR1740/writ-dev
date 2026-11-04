@@ -991,3 +991,10 @@ button.card.pick.picked { border-color: var(--pencil); box-shadow: inset 0 0 0 1
 .check-state.current { color: var(--ins-ink); font-weight: 600; }
 .check-state.stale { color: var(--flag); }
 .notice.ok-notice { background: var(--ins-bg); color: var(--ins-ink); border-color: transparent; align-items: center; }
+
+/* Planned blocks under an outline heading */
+details.structure { border-top: 1px dashed var(--rule); padding-top: 6px; }
+details.structure > summary { cursor: pointer; color: var(--muted); }
+ol.structure-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+ol.structure-list li { display: grid; grid-template-columns: 11rem 1fr auto; gap: 6px; align-items: center; }
+@media (max-width: 720px) { ol.structure-list li { grid-template-columns: 1fr; } }

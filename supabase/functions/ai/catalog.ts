@@ -17,8 +17,11 @@ import {
   OUTLINE_SYSTEM,
   REPURPOSE_BASE,
   REPURPOSE_SHAPES,
+  SEO_FIX_FINAL,
+  SEO_FIX_OUTLINE,
   SEO_GEO_BASE,
   SEO_GEO_CHECKS,
+  STRUCTURE_SYSTEM,
 } from "./writing.ts";
 import { ASK_SYSTEM, MEMORY_SYSTEM } from "./memory.ts";
 import { EXTRACT_BASE, EXTRACT_QUOTED, SEARCH_BASE, SERP } from "../_shared/research-prompts.ts";
@@ -216,6 +219,27 @@ export const ENTRIES: Entry[] = [
       },
       { key: "seo.outline", label: "Checks for an outline", text: SEO_GEO_CHECKS.outline, hint: "Keep each check's key (the word before the colon); the page shows results by it." },
       { key: "seo.final", label: "Checks for the finished piece", text: SEO_GEO_CHECKS.final, hint: "Keep each check's key (the word before the colon), and the meta title and description lines." },
+    ],
+  },
+  {
+    id: "outline_structure",
+    group: "Outline and writing",
+    title: "Improve section structure",
+    when: "On the Outline step, when you press Improve structure. It plans what goes under each heading; the writer edits it.",
+    tier: "reason",
+    receives: ["Brief", "Reader contract", "Analysis", "Approved piece research", "Format style profile", "Approved search-landscape findings", "The outline"],
+    units: [{ key: "structure", label: "Prompt", text: STRUCTURE_SYSTEM }],
+  },
+  {
+    id: "seo_fix",
+    group: "Checks while writing",
+    title: "Fix SEO and GEO gaps with AI",
+    when: "After an SEO/GEO check finds things to improve. On the outline it revises the plan; on the finished piece it proposes small edits you accept one by one.",
+    tier: "reason",
+    receives: ["Brief", "Reader contract", "Approved search-landscape findings", "The gaps the check found", "The outline or the finished piece"],
+    units: [
+      { key: "seo_fix.outline", label: "Prompt for the outline", text: SEO_FIX_OUTLINE },
+      { key: "seo_fix.final", label: "Prompt for the finished piece", text: SEO_FIX_FINAL },
     ],
   },
   {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { formatCost } from "../lib/format";
-import type { BriefBullet, CheckResult, Contract, FactFlag, Piece, ResearchItem, Section } from "../lib/types";
+import { BLOCK_LABELS, type BriefBullet, type CheckResult, type Contract, type FactFlag, type Piece, type ResearchItem, type Section } from "../lib/types";
 import { ResearchStep } from "./ResearchStep";
 import { AiAction, CopyButton, ErrorText, Loading, CleanTextarea } from "./ui";
 import { HUMANIZER_PROMPT } from "../lib/sections";
@@ -481,6 +481,16 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
             </li>
           ))}
         </ul>
+        {(section.structure ?? []).length > 0 && (
+          <>
+            <h3>Planned structure</h3>
+            <ol className="brief-view">
+              {section.structure!.map((b, i) => (
+                <li key={i}><span><strong>{BLOCK_LABELS[b.type] ?? b.type}</strong>: {b.note}</span></li>
+              ))}
+            </ol>
+          </>
+        )}
         <h3>Approved research</h3>
         <ItemList items={items} />
       </aside>

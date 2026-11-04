@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
-import type { Analysis, Contract, Piece, Section, ThreadMessage } from "../lib/types";
+import { BLOCK_LABELS, type Analysis, type Block, type BlockType, type Contract, type Piece, type Section, type ThreadMessage } from "../lib/types";
 import { CardForm, emptyCard } from "./CardForm";
 import { AiAction, ErrorText, Loading, Modal, CleanTextarea } from "./ui";
 import { SeoGeoPanel } from "./SeoGeoPanel";
@@ -12,6 +12,42 @@ interface Draft {
   heading: string;
   purpose: string;
   expectation_ids: string[];
+  /** What goes under the heading, block by block. Empty until planned. */
+  structure: Block[];
+}
+
+/** Edits one section's planned blocks: what kind of block, and what goes in it. */
+function StructureEditor({ blocks, disabled, onChange }: { blocks: Block[]; disabled: boolean; onChange: (b: Block[]) => void }) {
+  const set = (i: number, patch: Partial<Block>) => onChange(blocks.map((b, j) => (j === i ? { ...b, ...patch } : b)));
+  const move = (i: number, d: -1 | 1) => {
+    const list = [...blocks];
+    [list[i], list[i + d]] = [list[i + d], list[i]];
+    onChange(list);
+  };
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      {blocks.length === 0 && <p className="small muted">No structure planned. Without one, the section tends to come out as a single paragraph.</p>}
+      <ol className="structure-list">
+        {blocks.map((b, i) => (
+          <li key={i}>
+            <select value={b.type} disabled={disabled} onChange={(e) => set(i, { type: e.target.value as BlockType })} aria-label={`Block ${i + 1} type`}>
+              {(Object.keys(BLOCK_LABELS) as BlockType[]).map((t) => <option key={t} value={t}>{BLOCK_LABELS[t]}</option>)}
+            </select>
+            <input type="text" value={b.note} disabled={disabled} onChange={(e) => set(i, { note: e.target.value })}
+              placeholder="What goes in this block" aria-label={`Block ${i + 1} note`} />
+            {!disabled && (
+              <span className="row" style={{ gap: 2 }}>
+                <button type="button" className="btn btn-quiet btn-small" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move block up">↑</button>
+                <button type="button" className="btn btn-quiet btn-small" disabled={i === blocks.length - 1} onClick={() => move(i, 1)} aria-label="Move block down">↓</button>
+                <button type="button" className="btn btn-quiet btn-small btn-danger" onClick={() => onChange(blocks.filter((_, j) => j !== i))} aria-label="Remove block">✕</button>
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+      {!disabled && <div><button type="button" className="btn btn-small" onClick={() => onChange([...blocks, { type: "paragraph", note: "" }])}>Add block</button></div>}
+    </div>
+  );
 }
 
 const key = () => Math.random().toString(36).slice(2, 9);
@@ -36,21 +72,24 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [answering, setAnswering] = useState<{ question: string } | null>(null);
+  const [fixReply, setFixReply] = useState<string | null>(null);
   const confirmed = Boolean(piece.outline_confirmed_at);
   const recipe = normalise(piece.recipe);
   const aiThread = recipe.outline.mode === "free" && recipe.outline.ai_thread;
 
   useEffect(() => {
     if (data && draft === null) {
-      setDraft(data.sections.map((s) => ({ key: s.id, heading: s.heading, purpose: s.purpose, expectation_ids: s.expectation_ids })));
+      setDraft(data.sections.map((s) => ({ key: s.id, heading: s.heading, purpose: s.purpose, expectation_ids: s.expectation_ids, structure: s.structure ?? [] })));
     }
   }, [data, draft]);
 
   if (error) return <ErrorText>{error}</ErrorText>;
   if (!data || !draft) return <Loading />;
   const { contract, messages } = data;
-  const saved = JSON.stringify(data.sections.map((s) => [s.heading, s.purpose, s.expectation_ids]));
-  const dirty = JSON.stringify(draft.map((s) => [s.heading.trim(), s.purpose.trim(), s.expectation_ids])) !== saved;
+  const cleanBlocks = (b: Block[]) => b.filter((x) => x.note.trim()).map((x) => ({ type: x.type, note: x.note.trim() }));
+  const saved = JSON.stringify(data.sections.map((s) => [s.heading, s.purpose, s.expectation_ids, cleanBlocks(s.structure ?? [])]));
+  const dirty = JSON.stringify(draft.map((s) => [s.heading.trim(), s.purpose.trim(), s.expectation_ids, cleanBlocks(s.structure)])) !== saved;
+  const unplanned = draft.filter((s) => s.heading.trim() && s.structure.length === 0).length;
   const uncovered = contract.expectations.filter((e) => !draft.some((s) => s.expectation_ids.includes(e.id)));
 
   async function act(fn: () => Promise<void>) {
@@ -66,7 +105,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   }
 
   async function save() {
-    const clean = draft!.filter((s) => s.heading.trim()).map((s) => ({ heading: s.heading.trim(), purpose: s.purpose.trim(), expectation_ids: s.expectation_ids }));
+    const clean = draft!.filter((s) => s.heading.trim()).map((s) => ({ heading: s.heading.trim(), purpose: s.purpose.trim(), expectation_ids: s.expectation_ids, structure: cleanBlocks(s.structure) }));
     const { error: err } = await supabase.rpc("save_outline", { target_piece: piece.id, sections: clean });
     if (err) throw err;
     setDraft(null);
@@ -117,6 +156,12 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                       </label>
                     ))}
                   </div>
+                  <details className="structure" open={s.structure.length > 0 && !confirmed}>
+                    <summary className="small">
+                      Structure under this heading {s.structure.length > 0 ? `(${s.structure.length} blocks)` : "(not planned)"}
+                    </summary>
+                    <StructureEditor blocks={s.structure} disabled={confirmed} onChange={(structure) => update(s.key, { structure })} />
+                  </details>
                   {!confirmed && (
                     <div className="row" style={{ gap: 2 }}>
                       <button type="button" className="btn btn-quiet btn-small" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
@@ -129,11 +174,39 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
             </ol>
             {!confirmed && (
               <div>
-                <button type="button" className="btn btn-small" onClick={() => setDraft([...draft, { key: key(), heading: "", purpose: "", expectation_ids: [] }])}>
+                <button type="button" className="btn btn-small" onClick={() => setDraft([...draft, { key: key(), heading: "", purpose: "", expectation_ids: [], structure: [] }])}>
                   Add section
                 </button>
               </div>
             )}
+            {!confirmed && recipe.outline.mode !== "off" && draft.length > 0 && (
+              <div className="notice stack" style={{ gap: 8 }}>
+                <p className="small">
+                  <strong>Plan what goes under each heading.</strong>{" "}
+                  {unplanned > 0
+                    ? `${unplanned} of ${draft.length} sections have no structure yet. A section with only a heading and a purpose usually comes out as one paragraph, which search and answer engines read poorly.`
+                    : "Every section has a planned structure. Edit any block, or run this again after changing the outline."}
+                </p>
+                <div className="row">
+                  <AiAction<{ sections: { position: number; blocks: Block[] }[] }>
+                    label={unplanned === draft.length ? "Improve structure" : "Improve structure again"}
+                    primary={unplanned > 0}
+                    disabled={dirty}
+                    reason="Save your edits first so the AI sees them"
+                    payload={{ task: "outline_structure", piece_id: piece.id }}
+                    onDone={(r) => {
+                      setDraft(draft.map((s, i) => {
+                        const blocks = r.sections.find((x) => x.position === i + 1)?.blocks;
+                        return blocks?.length ? { ...s, structure: blocks } : s;
+                      }));
+                      setFixReply("Structure suggested for every section. Review the blocks, edit what you like, then save.");
+                    }}
+                  />
+                  <span className="small muted">Suggests blocks such as a short answer, a table or steps. It does not change your headings.</span>
+                </div>
+              </div>
+            )}
+            {fixReply && <p className="notice small">{fixReply}</p>}
             {uncovered.length > 0 && draft.length > 0 && (
               <p className="notice small">
                 Not covered by any section: {uncovered.map((e) => `"${e.text}"`).join("; ")}
@@ -173,6 +246,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                         heading: s.heading,
                         purpose: s.purpose,
                         expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
+                        structure: [],
                       })))}>
                         Use this outline
                       </button>
@@ -197,7 +271,17 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
         )}
       </div>
 
-      {recipe.outline.seo_geo_check && <SeoGeoPanel piece={piece} scope="outline" result={piece.seo_geo_outline} disabled={dirty || data.sections.length === 0} reason={dirty ? "Save your edits first" : "Add sections first"} onDone={onChanged} />}
+      {recipe.outline.seo_geo_check && <SeoGeoPanel piece={piece} scope="outline" result={piece.seo_geo_outline} disabled={dirty || data.sections.length === 0} reason={dirty ? "Save your edits first" : "Add sections first"} onDone={onChanged}
+        onFixOutline={confirmed ? undefined : (fix) => {
+          setDraft(fix.sections.map((s) => ({
+            key: key(),
+            heading: s.heading,
+            purpose: s.purpose,
+            expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
+            structure: s.blocks,
+          })));
+          setFixReply(`${fix.reply} This is a proposal: review the outline above, then save it and run the check again.`);
+        }} />}
 
       {answering && (
         <Modal title="Save the expert's answer as an insight" onClose={() => setAnswering(null)}>
