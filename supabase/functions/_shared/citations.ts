@@ -16,24 +16,48 @@ export interface Finding {
   quoteStatus: "cited" | "verified" | "unverified";
 }
 
-const TAGS = `Start the paragraph with one tag for the kind of source: [original_research], [official],
-[practitioner], [critical], [data], [serp] (what ranking pages cover or skip, questions people ask,
-search intent) or [web]. Add [secondary] right after it when the page reports a figure or claim from
-somewhere else. One fact per paragraph, plain and specific, with the date when the source gives one.`;
+const TAGS = `TAGS
+Start each finding with one tag for the kind of source:
+- [original_research]: a study, survey or benchmark by the people who ran it
+- [official]: documentation, a filing, a standard or government data
+- [practitioner]: a case study, engineering blog, talk or named real-world example
+- [critical]: a limitation, failure or opposing view
+- [data]: a figure or dataset
+- [serp]: what ranking pages cover or skip, questions people ask, search intent
+- [web]: anything else that is credible
+Add [secondary] right after the tag when the page reports a figure or claim from somewhere else.
+One fact per finding. Plain and specific. Include the date when the source gives one.`;
 
-export const FINDING_FORMAT = `Write each finding as its own paragraph, separated by a blank line. ${TAGS}
-Every finding must be supported by a citation. No introduction, headings or summary.`;
+export const FINDING_FORMAT = `OUTPUT FORMAT
+Write each finding as its own paragraph, separated by a blank line.
+No introduction, no headings, no summary, no closing remarks.
+Every finding must be supported by a citation from a page you read.
+
+${TAGS}
+
+EXAMPLE OF THE SHAPE ONLY (invented; never include it in your answer)
+[practitioner] Acme Foods cut stock-outs by 18% in 2024 after moving to weekly demand planning.
+
+[critical][secondary] A 2023 survey cited by the page found 40% of planning projects stalled on data quality.`;
 
 /** For providers without a citation API: the model quotes, we verify. */
-export const QUOTED_FORMAT = `Write each finding as its own block, separated by a blank line, in exactly this
-shape:
+export const QUOTED_FORMAT = `OUTPUT FORMAT
+Write each finding as its own block, separated by a blank line, in exactly this shape:
 
 [tag] The finding in one plain sentence.
 URL: the exact page address you read it on
 QUOTE: "a short passage copied word for word from that page that supports the finding"
 
-${TAGS} The quote must be copied exactly, not paraphrased: it is checked against the page, and
-findings whose quote can't be found are flagged to the reviewer. No introduction, headings or summary.`;
+No introduction, no headings, no summary, no closing remarks.
+The quote must be copied exactly, not paraphrased. It is checked against the page, and findings
+whose quote can't be found are flagged to the reviewer.
+
+${TAGS}
+
+EXAMPLE OF THE SHAPE ONLY (invented; never include it in your answer)
+[practitioner] Acme Foods cut stock-outs by 18% in 2024 after moving to weekly demand planning.
+URL: https://example.com/acme-case-study
+QUOTE: "Stock-outs fell 18% in 2024 once planning moved from monthly to weekly."`;
 
 /** Parse QUOTED_FORMAT blocks. Quotes start unverified; the caller checks them. */
 export function parseQuotedFindings(text: string): Finding[] {

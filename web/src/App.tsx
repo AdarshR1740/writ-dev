@@ -16,6 +16,7 @@ import { PiecesPage } from "./pages/PiecesPage";
 import { PiecePage } from "./pages/PiecePage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { VoiceMemoryPage } from "./pages/VoiceMemoryPage";
+import { PromptsPage } from "./pages/PromptsPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { NewRepurposePage, RepurposePlanPage } from "./pages/RepurposePage";
 
@@ -80,6 +81,7 @@ function Routed() {
                   <Route path="/voice-memory" element={<VoiceMemoryPage />} />
                   <Route path="/team" element={<TeamPage />} />
                   <Route path="/ai" element={<AiSettingsPage />} />
+                  <Route path="/prompts" element={<PromptsPage />} />
                   <Route path="*" element={<Navigate to="/pieces" replace />} />
                 </Routes>
               </Layout>

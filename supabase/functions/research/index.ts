@@ -20,59 +20,37 @@ import { fetchPage, quoteFound } from "../_shared/web.ts";
 import { costUsd, estimateTokens, SEARCH_COST_USD } from "../_shared/models.ts";
 import { contextFor, loadPiece, loadSection, logEvent, on, type Piece, requireStep, type SectionRow, setting } from "../_shared/context.ts";
 import {
-  FINDING_FORMAT,
   type Finding,
   pageAges,
   parseFindings,
   parseQuotedFindings,
-  QUOTED_FORMAT,
   SOURCE_TYPES,
 } from "../_shared/citations.ts";
+import { EXTRACT_QUOTED, extractSystem, searchSystem } from "../_shared/research-prompts.ts";
+import { promptSet } from "../_shared/prompt-overrides.ts";
 
 const DEFAULT_MAX_SEARCHES = 6;
 const MAX_SOURCE_CHARS = 300_000;
 
-const SEARCH_BASE = `You research a piece of B2B content for a company's writers. You find facts;
-you don't write the piece.
+/** The user message for a search: states the subject outright so a small model can't drift off it. */
+function searchRequest(piece: Piece, context: string, section: SectionRow | null): string {
+  const subject = piece.topic?.trim() || piece.title;
+  const keyword = piece.primary_keyword ? ` (primary keyword: "${piece.primary_keyword}")` : "";
+  if (section) {
+    return `${context}
 
-Search widely, not just the first page of results. Deliberately look for each kind of source:
-- original research and reports (studies, surveys, benchmarks)
-- official sources (documentation, filings, standards, government data)
-- practitioners (case studies, engineering blogs, conference talks)
-- critical or contrary views (limitations, failures, criticism)
-- raw data
+TASK
+Research one section of the piece "${piece.title}". Subject of the piece: "${subject}"${keyword}.
+Section: "${section.heading}"${section.purpose ? `, which should cover: ${section.purpose}` : ""}.
+The piece-level research is already done, so go deeper, not wider: specifics, named examples, numbers
+and limits for this section. Every search must be about "${subject}" and this section.`;
+  }
+  return `${context}
 
-{SERP}The reader contract shows what the piece must deliver; use it to decide what to look for, but report
-anything important you find outside it too. Prefer the original source over pages that repeat it.
-Report 8 to 15 findings.`;
-
-const SERP = `For piece-level research, also read the search landscape for the primary keyword: what intent the
-ranking pages serve, what they all cover, what they skip or get wrong, and which questions people ask
-about it. Report those as [serp] findings; they inform the piece, they're not a template to copy.
-
-`;
-
-/** The search prompt for this piece's recipe (search landscape only when switched on). */
-function searchSystem(withSerp: boolean, quoted: boolean): string {
-  const base = SEARCH_BASE.replace("{SERP}", withSerp ? SERP : "");
-  return `${base}\n\n${quoted ? QUOTED_FORMAT : FINDING_FORMAT}`;
+TASK
+Research the piece "${piece.title}". Subject: "${subject}"${keyword}.
+Follow the steps in your instructions. Every search must be about "${subject}".`;
 }
-
-const EXTRACT_BASE = `You pull research findings out of one source for a piece of B2B content. Report
-only what this source actually says that matters for the piece: facts, figures, examples, named
-companies, dates, and claims worth checking. Skip filler and anything unrelated. Report at most 12
-findings.`;
-
-const EXTRACT_SYSTEM = `${EXTRACT_BASE}\n\n${FINDING_FORMAT}`;
-
-// For providers without document citations: structured findings with a
-// verbatim quote, checked against the source text by the server.
-const EXTRACT_SYSTEM_QUOTED = `${EXTRACT_BASE}
-
-For each finding give: the kind of source (original_research, official, practitioner, critical, data,
-serp or web), whether it is secondary (the source reports someone else's figure or claim), the
-finding in one plain sentence, and a short passage copied word for word from the source that
-supports it. Quotes are checked against the source; never paraphrase them.`;
 
 const str = { type: "string" };
 const extractQuotedSchema = {
@@ -238,6 +216,7 @@ Deno.serve(handle(async (req) => {
     .single();
   if (!contract?.confirmed_at) throw new UserError("Confirm the reader contract before researching.");
   const conn = await connect(piece.company_id, "research");
+  const prompts = await promptSet(piece.company_id);
   const estimate = body.mode === "estimate";
 
   const maxSearches = Math.min(10, Math.max(1, Number(setting<number>(piece, "research.max_searches")) || DEFAULT_MAX_SEARCHES));
@@ -250,14 +229,12 @@ Deno.serve(handle(async (req) => {
     const context = section
       ? await contextFor(piece, ["brief", "contract", "outline"], section)
       : await contextFor(piece, ["brief", "contract", "icp"]);
-    const prompt = section
-      ? `${context}\n\nResearch this one section in depth: specifics, named examples, numbers, and limits. The piece-level research is already done; go deeper, not wider.`
-      : `${context}\n\nResearch this piece.`;
+    const prompt = searchRequest(piece, context, section);
     if (estimate) {
       if (conn.provider !== "anthropic" && conn.provider !== "openai") {
         throw new UserError("Web search needs an Anthropic or OpenAI key. With this provider, add sources yourself by URL or paste.");
       }
-      const input = estimateTokens(searchSystem(withSerp, false).length + prompt.length) + maxSearches * 3000;
+      const input = estimateTokens(searchSystem(withSerp, false, maxSearches, prompts).length + prompt.length) + maxSearches * 3000;
       const tokens = costUsd(conn.model, input, 4000);
       // OpenAI's per-search price isn't included; its estimate covers tokens only.
       const cost = tokens === null ? null : tokens + (conn.provider === "anthropic" ? maxSearches * SEARCH_COST_USD : 0);
@@ -271,9 +248,11 @@ Deno.serve(handle(async (req) => {
     }
     if (conn.provider === "anthropic") {
       const r = await callAnthropicCited(conn, {
-        system: searchSystem(withSerp, false),
+        system: searchSystem(withSerp, false, maxSearches, prompts),
         content: [{ type: "text", text: prompt }],
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: maxSearches } as Anthropic.Beta.BetaToolUnion],
+        // Basic search, called directly: the 20260209 version defaults to calling search from code
+        // execution, which models without programmatic tool calling (such as Haiku) reject with a 400.
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: maxSearches } as Anthropic.Beta.BetaToolUnion],
         effort: "medium",
       });
       const findings = parseFindings(r.content as never);
@@ -283,7 +262,7 @@ Deno.serve(handle(async (req) => {
       return json({ added, searches: r.searches, cost_usd: cost, model: conn.model });
     }
     if (conn.provider === "openai") {
-      const r = await callOpenAISearch(conn, searchSystem(withSerp, true), prompt, maxSearches);
+      const r = await callOpenAISearch(conn, searchSystem(withSerp, true, maxSearches, prompts), prompt, maxSearches);
       const findings = parseQuotedFindings(r.text);
       const pages = await verifyQuotes(findings);
       const ages = new Map([...pages].filter(([, p]) => p.published).map(([u, p]) => [u, p.published]));
@@ -321,7 +300,7 @@ Deno.serve(handle(async (req) => {
     const context = await contextFor(piece, ["brief", "contract"], section ?? undefined);
     const prompt = `${context}\n\nPull the findings that matter for ${section ? "this section" : "this piece"} from the attached source.`;
     if (estimate) {
-      const input = estimateTokens(EXTRACT_SYSTEM.length + prompt.length + text.length);
+      const input = estimateTokens(extractSystem(prompts).length + prompt.length + text.length);
       const cost = costUsd(conn.model, input, 2500);
       return json({ model: conn.model, input_tokens: input, output_tokens: 2500, cost_usd: cost, ...(await budgetForEstimate(piece.company_id, cost)) });
     }
@@ -352,7 +331,7 @@ Deno.serve(handle(async (req) => {
 
     if (conn.provider === "anthropic") {
       const r = await callAnthropicCited(conn, {
-        system: EXTRACT_SYSTEM,
+        system: extractSystem(prompts),
         content: [
           {
             type: "document",
@@ -376,7 +355,7 @@ Deno.serve(handle(async (req) => {
       piece.company_id,
       {
         taskType: "research",
-        system: EXTRACT_SYSTEM_QUOTED,
+        system: prompts("research.extract_quoted", EXTRACT_QUOTED),
         user: `<source title="${(title || url || "Source").replace(/"/g, "'")}">\n${text}\n</source>\n\n${prompt}`,
         schema: extractQuotedSchema,
         schemaName: "source_findings",

@@ -107,6 +107,8 @@ export function AiAction<T>({
   fn = "ai",
   primary = true,
   reason,
+  payloads,
+  merge,
 }: {
   label: string;
   payload: Record<string, unknown>;
@@ -116,16 +118,32 @@ export function AiAction<T>({
   onDone: (result: T) => void;
   fn?: string;
   primary?: boolean;
+  /** Several calls in one go (for example one per source): estimated together, run one after another. */
+  payloads?: Record<string, unknown>[];
+  /** Combines the results of `payloads` into the one result `onDone` receives. */
+  merge?: (results: T[]) => T;
 }) {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [busy, setBusy] = useState<"estimate" | "run" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const batch = payloads && payloads.length > 1 && merge ? payloads : null;
 
   async function check() {
     setBusy("estimate");
     setError(null);
     try {
-      setEstimate(await callFunction<Estimate>(fn, { ...payload, mode: "estimate" }));
+      if (batch) {
+        const all = await Promise.all(batch.map((p) => callFunction<Estimate>(fn, { ...p, mode: "estimate" })));
+        const cost = all.some((e) => e.cost_usd === null) ? null : all.reduce((sum, e) => sum + (e.cost_usd ?? 0), 0);
+        const first = all[0];
+        setEstimate({
+          ...first,
+          cost_usd: cost,
+          month_after: first.month_spent != null && cost !== null ? first.month_spent + cost : first.month_after,
+        });
+      } else {
+        setEstimate(await callFunction<Estimate>(fn, { ...(payloads?.[0] ?? payload), mode: "estimate" }));
+      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -137,7 +155,14 @@ export function AiAction<T>({
     setBusy("run");
     setError(null);
     try {
-      const result = await callFunction<T>(fn, payload);
+      let result: T;
+      if (batch) {
+        const results: T[] = [];
+        for (const p of batch) results.push(await callFunction<T>(fn, p));
+        result = merge!(results);
+      } else {
+        result = await callFunction<T>(fn, payloads?.[0] ?? payload);
+      }
       setEstimate(null);
       onDone(result);
     } catch (err) {

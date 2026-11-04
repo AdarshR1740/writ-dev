@@ -7,6 +7,33 @@ check that each step we discussed has a default prompt.
 The model tiers are `extract`, `research`, `reason` and `write`. Each company's
 provider picks the actual model per tier; see `_shared/models.ts`.
 
+In the app, **Prompts** (sidebar, under AI provider & models) lists every prompt below with where it runs, its
+model tier and the context it receives. Editors can change any of them for their company; anyone can read them.
+A company's version is stored in `prompt_overrides` (one row per prompt key) and every task asks for its prompt
+through `promptSet(companyId)`, which returns the company's version or the built-in one. "Reset to Writ's
+version" deletes the row. The `ai` function's `prompts` task builds the list from
+`supabase/functions/ai/catalog.ts`, using the same constants the tasks run on.
+
+Adding a prompt: define it, give it a key in `catalog.ts`, and read it in the task with `prompts(key, builtIn)`.
+
+What can't be edited: parts Writ adds after the prompt because code depends on their exact shape (the research
+output format the parser reads, the note added when a format switches parts of a step off). Structured tasks
+return JSON checked against a schema, so editing their wording can't break the result's shape. Placeholders
+such as `{SEARCHES}`, `{SERP}` and `{FORMAT}` are filled in at run time; the editor warns if one is removed.
+Prompt edits are not yet recorded in a piece's editorial record.
+
+## How prompts are written
+
+Every prompt is built for small, low-reasoning models such as Haiku as well as large ones. Each follows the
+same layout: **ROLE**, **WHAT YOU RECEIVE** (each context block named), **STEPS** (numbered, in the order to
+work), **RULES**, and **OUTPUT** (every field named and explained). Where a model tends to get it wrong, the
+prompt shows a short good/bad example. Examples are marked as shape-only so they aren't copied into answers.
+
+Web search prompts also state the subject outright (the piece's topic and primary keyword) in both the system
+and user message, require every query to contain the subject's words, and tell the model to report fewer
+findings rather than pad with off-topic ones. The reader's ICP is given only for judging relevance, never as
+something to search for.
+
 ## A. Prompts teams run in their own AI tool (house file)
 
 These live in `web/src/lib/sections.ts` and appear as "Get this from your AI tool" in each section.

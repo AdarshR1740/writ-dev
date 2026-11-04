@@ -140,3 +140,22 @@ export function cardsToCsv(cards: CardFields[]): string {
     { columns: [...CARD_COLUMNS] },
   );
 }
+
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * What a card adds beyond its claim. Extracted and imported cards often open their detail by repeating the
+ * claim; showing both makes the same sentence appear twice, so only the part that isn't the claim is kept.
+ */
+export function cardDetail(claim: string, detail: string): string {
+  const d = detail.trim();
+  if (!d) return "";
+  const c = squash(claim);
+  if (squash(d) === c) return "";
+  if (c && squash(d).startsWith(c)) {
+    const cut = d.slice(claim.trim().length).replace(/^[\s.:;,–—-]+/, "").trim();
+    // The claim's text may differ slightly in punctuation; fall back to the whole detail if the cut looks wrong.
+    if (squash(d.slice(0, claim.trim().length)) === c) return cut;
+  }
+  return d;
+}

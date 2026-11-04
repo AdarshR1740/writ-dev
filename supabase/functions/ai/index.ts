@@ -15,6 +15,7 @@ import {
   contractSchema,
   consolidateSchema,
   consolidateSystem,
+  consolidateTemplate,
   consolidateUser,
   type DocKind,
   EXTRACT_SYSTEM,
@@ -27,6 +28,8 @@ const MAX_INPUT_CHARS = 400_000;
 import type { Prepared } from "./prepared.ts";
 import { WRITING_TASKS } from "./writing.ts";
 import { MEMORY_TASKS } from "./memory.ts";
+import { promptCatalog } from "./catalog.ts";
+import { promptSet } from "../_shared/prompt-overrides.ts";
 
 async function prepareConsolidate(userId: string, body: Record<string, unknown>): Promise<Prepared> {
   const documentId = String(body.document_id ?? "");
@@ -49,7 +52,10 @@ async function prepareConsolidate(userId: string, body: Record<string, unknown>)
   if (!inputs?.length) throw new UserError("Add some material first. Everything here is already merged.");
 
   const format = Array.isArray(doc.formats) ? doc.formats[0] : doc.formats;
-  const system = consolidateSystem(doc.kind as DocKind, format?.name, format?.description);
+  const prompts = await promptSet(doc.company_id);
+  const system = consolidateSystem(
+    prompts(`consolidate.${doc.kind}`, consolidateTemplate(doc.kind as DocKind)), format?.name, format?.description,
+  );
   const user = consolidateUser(doc.content, inputs);
   if (user.length > MAX_INPUT_CHARS) {
     throw new UserError("That's too much material to merge at once. Remove some sources and merge in two rounds.");
@@ -103,16 +109,17 @@ async function prepareExtract(userId: string, body: Record<string, unknown>): Pr
     date: String(body.source_date ?? ""),
   });
   const taskType: TaskType = "extract";
+  const system = (await promptSet(companyId))("extract_cards", EXTRACT_SYSTEM);
   return {
     companyId,
     taskType,
-    system: EXTRACT_SYSTEM,
+    system,
     user,
     expectedOutputTokens: 3000,
     run: async () => {
       const r = await runModel<{ cards: unknown[] }>(companyId, {
         taskType,
-        system: EXTRACT_SYSTEM,
+        system,
         user,
         schema: extractSchema,
         schemaName: "insight_cards",
@@ -140,10 +147,14 @@ async function prepareContract(userId: string, body: Record<string, unknown>): P
     .map((m) => `<${m.role}>\n${m.content}\n</${m.role}>`).join("\n");
   const user = `${context}\n\n<conversation>\n${conversation || "(The writer hasn't said anything yet. Suggest a first contract.)"}\n</conversation>`;
   const taskType: TaskType = "reason";
+  const prompts = await promptSet(piece.company_id);
+  const system = mode === "lite"
+    ? `${prompts("contract.base", CONTRACT_SYSTEM)}\n\n${prompts("contract.lite", CONTRACT_LITE)}`
+    : prompts("contract.base", CONTRACT_SYSTEM);
   return {
     companyId: piece.company_id,
     taskType,
-    system: mode === "lite" ? `${CONTRACT_SYSTEM}\n\n${CONTRACT_LITE}` : CONTRACT_SYSTEM,
+    system,
     user,
     expectedOutputTokens: 1200,
     run: async () => {
@@ -155,7 +166,7 @@ async function prepareContract(userId: string, body: Record<string, unknown>): P
       }
       const r = await runModel<{ reply: string; core_question: string; expectations: string[] }>(piece.company_id, {
         taskType,
-        system: mode === "lite" ? `${CONTRACT_SYSTEM}\n\n${CONTRACT_LITE}` : CONTRACT_SYSTEM,
+        system,
         user,
         schema: contractSchema,
         schemaName: "reader_contract",
@@ -187,6 +198,11 @@ const TASKS: Record<string, (userId: string, body: Record<string, unknown>) => P
 Deno.serve(handle(async (req) => {
   const user = await requireUser(req);
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  // Read-only list of every prompt, for the prompt viewer in Settings. No model call, no cost.
+  if (body.task === "prompts") {
+    await requireRole(user.id, String(body.company_id ?? ""), "member");
+    return json({ prompts: await promptCatalog(String(body.company_id)) });
+  }
   const prepare = TASKS[String(body.task ?? "")];
   if (!prepare) throw new UserError("Unknown task.");
   const prepared = await prepare(user.id, body);

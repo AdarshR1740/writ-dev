@@ -8,6 +8,7 @@ import { type JsonSchema, recordUsage, runModel } from "../_shared/llm.ts";
 import type { TaskType } from "../_shared/models.ts";
 import { loadPiece, logEvent } from "../_shared/context.ts";
 import type { Prepared } from "./prepared.ts";
+import { promptSet } from "../_shared/prompt-overrides.ts";
 
 interface Passage { kind: string; ref_id: string; piece_id: string | null; label: string; title: string; body: string; path: string }
 
@@ -37,23 +38,30 @@ const cite = (p: Passage, n: number) => ({ n, kind: p.kind, label: p.label, titl
 // Ask Writ
 // ---------------------------------------------------------------------------
 
-const ASK_SYSTEM = `You are Writ's assistant for one company. You answer questions using ONLY
-the numbered passages, which come from the company's own material: its finished
-pieces, insight and data cards, house file (customer profile, positioning, voice)
-and approved research.
+export const ASK_SYSTEM = `ROLE
+You are Writ's assistant for one company. You answer questions using ONLY the numbered passages.
 
-Rules:
-- Every statement in your answer must come from the passages. Cite each one with
-  its passage number in square brackets, like [2] or [1][4].
-- If the passages don't answer the question, or only partly, say so plainly in
-  the first sentence. Then say where the answer would belong (for example "add it
-  as an insight card" or "it isn't in the house file yet"). Never fill gaps with
-  general knowledge, and never guess.
-- Be brief and specific: a few sentences or a short list. Quote exact figures.
-- You help people find and reuse what they already know. You don't write or
-  rewrite content; if asked to, explain that writing happens in a piece, and
-  offer the relevant passages instead.
-- Earlier turns are context for follow-up questions; answer the latest question.`;
+WHAT YOU RECEIVE
+- <passages>: numbered passages [1], [2], and so on, from the company's own material: finished pieces, insight and data cards, the house file (customer profile, positioning, voice) and approved research.
+- <earlier> (sometimes): the conversation so far. Use it only to understand follow-up questions.
+- <question>: the question to answer. Answer this one.
+
+STEPS
+1. Read the question.
+2. Find the passages that answer it.
+3. Write the answer from those passages only. After each statement, cite the passages it came from, like [2] or [1][4].
+4. Decide "covered": "yes" if the passages fully answer it, "partly" if they answer some of it, "no" if they don't answer it.
+
+RULES
+- Every statement must come from the passages. Never use general knowledge. Never guess.
+- If the passages answer only partly, or not at all, say so plainly in the FIRST sentence. Then say where the answer would belong (for example "add it as an insight card" or "it isn't in the house file yet").
+- Be brief and specific: a few sentences or a short list. Quote exact figures as they appear.
+- You help people find and reuse what they already know. You don't write or rewrite content. If asked to, explain that writing happens inside a piece, and offer the relevant passages instead.
+
+OUTPUT
+- answer: the answer text, with [n] citations.
+- covered: "yes", "partly" or "no".
+- cited: the passage numbers you cited.`;
 
 const askSchema: JsonSchema = {
   type: "object",
@@ -90,11 +98,12 @@ async function prepareAsk(userId: string, body: Record<string, unknown>): Promis
   const conversation = turns.map((t) => `<${t.role}>\n${t.content}\n</${t.role}>`).join("\n");
   const user = `${conversation ? `<earlier>\n${conversation}\n</earlier>\n\n` : ""}<passages>\n${passages.length ? numbered(passages) : "(No passages matched.)"}\n</passages>\n\n<question>\n${question || "What do we know about our customers?"}\n</question>`;
   const taskType: TaskType = "reason";
+  const system = (await promptSet(companyId))("ask", ASK_SYSTEM);
 
   return {
     companyId,
     taskType,
-    system: ASK_SYSTEM,
+    system,
     user,
     expectedOutputTokens: 600,
     run: async () => {
@@ -109,7 +118,7 @@ async function prepareAsk(userId: string, body: Record<string, unknown>): Promis
         answer = "I couldn't find anything about that in your material. If it's something your company knows, add it as an insight card or to the house file, and I'll be able to find it.";
       } else {
         const r = await runModel<{ answer: string; covered: string; cited: number[] }>(companyId, {
-          taskType, system: ASK_SYSTEM, user, schema: askSchema, schemaName: "ask_writ", maxTokens: 4000,
+          taskType, system, user, schema: askSchema, schemaName: "ask_writ", maxTokens: 4000,
         });
         await recordUsage(companyId, userId, "ask", taskType, r);
         cost = r.costUsd;
@@ -134,24 +143,31 @@ async function prepareAsk(userId: string, body: Record<string, unknown>): Promis
 // Memory check: this piece against what the company has already published
 // ---------------------------------------------------------------------------
 
-const MEMORY_SYSTEM = `You compare a new piece of B2B content with what the same company has
-already published, shown as numbered passages from earlier finished pieces and
-their approved research. Flag only what an editor would want to know before
-publishing:
+export const MEMORY_SYSTEM = `ROLE
+You compare a new piece of B2B content with what the same company has already published. You flag only what an editor would want to know before publishing.
 
-- "contradiction": the new piece states a fact, figure or position that conflicts
-  with an earlier piece (for example a different number for the same statistic,
-  or the opposite recommendation). The most important kind.
-- "repeat": the new piece makes the same argument, uses the same story or example,
-  or leads with the same angle as an earlier piece, so readers who saw that one
-  get little new.
-- "link": an earlier piece covers a point the new piece mentions in passing, so
-  linking to it would help the reader.
+WHAT YOU RECEIVE
+- <published>: numbered passages [1], [2], and so on, from earlier finished pieces and their approved research.
+- <new_piece>: the new piece.
 
-For each flag give the exact sentence from the new piece (copied word for word),
-the passage number it relates to, and one short note saying what the editor
-should check or do. Flag nothing that is merely on the same topic. Fewer, better
-flags; an empty list is a fine answer. No scores.`;
+STEPS
+1. Read the new piece one sentence at a time.
+2. For each sentence, check the published passages for a conflict, a repeat or a useful link.
+3. Write one flag for each one you find. Use exactly these three kinds:
+   - "contradiction": the new piece states a fact, figure or position that conflicts with an earlier piece, such as a different number for the same statistic, or the opposite recommendation. This is the most important kind.
+   - "repeat": the new piece makes the same argument, uses the same story or example, or leads with the same angle as an earlier piece, so readers who saw that one get little new.
+   - "link": an earlier piece covers a point the new piece only mentions in passing, so linking to it would help the reader.
+
+RULES
+- Flag nothing that is merely on the same topic.
+- Fewer, better flags. An empty list is a fine answer.
+- No scores.
+
+OUTPUT (for each flag)
+- kind: "contradiction", "repeat" or "link".
+- sentence: the sentence from the new piece, copied word for word.
+- passage: the number of the passage it relates to.
+- note: one short sentence saying what the editor should check or do.`;
 
 const memorySchema: JsonSchema = {
   type: "object",
@@ -190,16 +206,17 @@ async function prepareMemoryCheck(userId: string, body: Record<string, unknown>)
   }
   const user = `<published>\n${numbered(passages)}\n</published>\n\n<new_piece title="${piece.title.replace(/"/g, "'")}">\n${text}\n</new_piece>`;
   const taskType: TaskType = "reason";
+  const system = (await promptSet(piece.company_id))("memory_check", MEMORY_SYSTEM);
 
   return {
     companyId: piece.company_id,
     taskType,
-    system: MEMORY_SYSTEM,
+    system,
     user,
     expectedOutputTokens: 1500,
     run: async () => {
       const r = await runModel<{ flags: { kind: string; sentence: string; passage: number; note: string }[] }>(piece.company_id, {
-        taskType, system: MEMORY_SYSTEM, user, schema: memorySchema, schemaName: "memory_check", maxTokens: 8000,
+        taskType, system, user, schema: memorySchema, schemaName: "memory_check", maxTokens: 8000,
       });
       await recordUsage(piece.company_id, userId, "memory_check", taskType, r, piece.id);
       const body = norm(text);

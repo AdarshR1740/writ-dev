@@ -13,6 +13,7 @@ import {
 } from "../lib/types";
 import { AiAction, ErrorText, Loading, Tabs } from "./ui";
 import { normalise } from "../lib/recipes";
+import { cardDetail } from "../lib/cards";
 
 interface Loaded {
   items: ResearchItem[];
@@ -150,7 +151,7 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
       section_key: section?.id ?? null,
       card_id: c.id,
       statement: c.claim,
-      quote: c.detail,
+      quote: cardDetail(c.claim, c.detail),
       source_type: "card",
     }).select("id"));
   });
@@ -314,7 +315,9 @@ function ItemView({ item, focused, locked, onFocus, onReview, onLibrary }: {
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const src = item.sources;
-  const link = src?.url && item.quote
+  // Items from cards added earlier may still carry a quote that repeats the statement.
+  const shownQuote = item.card_id ? cardDetail(item.statement, item.quote) : item.quote;
+  const link =src?.url && item.quote
     ? `${src.url}#:~:text=${encodeURIComponent(item.quote.split(" … ")[0].slice(0, 120))}`
     : src?.url ?? null;
   return (
@@ -344,7 +347,7 @@ function ItemView({ item, focused, locked, onFocus, onReview, onLibrary }: {
           </div>
         </div>
       )}
-      {item.quote && <blockquote className="quote">{item.quote}</blockquote>}
+      {shownQuote && <blockquote className="quote">{shownQuote}</blockquote>}
       {item.quote_status === "unverified" && (
         <p className="small flag-text">This quote wasn't found word for word in the source. Open the source and check before approving.</p>
       )}
@@ -366,49 +369,92 @@ function ItemView({ item, focused, locked, onFocus, onReview, onLibrary }: {
 
 function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<string, string>; onAdded: (n: number) => void }) {
   const [tab, setTab] = useState<"url" | "paste">("url");
-  const [url, setUrl] = useState("");
+  const [urls, setUrls] = useState("");
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
-  const [fetched, setFetched] = useState<{ url: string; title: string; text: string; published: string } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [fetched, setFetched] = useState<FetchedPage[]>([]);
+  const [failed, setFailed] = useState<{ url: string; reason: string }[]>([]);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function fetchPage() {
-    setBusy(true);
+  const links = parseLinks(urls);
+
+  // One link per line. Each page is fetched on its own so one blocked site doesn't stop the rest.
+  async function fetchPages() {
+    setProgress("Fetching…");
     setError(null);
-    try {
-      const r = await callFunction<{ ok: boolean; paste?: boolean; reason?: string; url?: string; title?: string; text?: string; published?: string }>(
-        "fetch-url", { company_id: piece.company_id, url },
-      );
-      if (r.ok && r.text) setFetched({ url: r.url!, title: r.title ?? "", text: r.text, published: r.published ?? "" });
-      else {
-        setError(r.reason ?? "Couldn't fetch that page.");
-        if (r.paste) { setTab("paste"); setTitle(url); }
+    setFailed([]);
+    const got: FetchedPage[] = [];
+    const missed: { url: string; reason: string }[] = [];
+    const batch = links.slice(0, MAX_LINKS);
+    for (const [i, url] of batch.entries()) {
+      setProgress(`Fetching ${i + 1} of ${batch.length}…`);
+      try {
+        const r = await callFunction<{ ok: boolean; paste?: boolean; reason?: string; url?: string; title?: string; text?: string; published?: string }>(
+          "fetch-url", { company_id: piece.company_id, url },
+        );
+        if (r.ok && r.text) got.push({ url: r.url ?? url, title: r.title ?? "", text: r.text, published: r.published ?? "" });
+        else missed.push({ url, reason: r.reason ?? "Couldn't fetch that page." });
+      } catch (err) {
+        missed.push({ url, reason: errorMessage(err) });
       }
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
     }
+    setFetched(got);
+    setFailed(missed);
+    setProgress(null);
   }
 
-  const payload = tab === "url" && fetched
-    ? { action: "extract_source", ...scope, origin: "url", url: fetched.url, title: fetched.title, text: fetched.text, published: fetched.published }
-    : { action: "extract_source", ...scope, origin: "paste", url: title.startsWith("http") ? title : null, title, text };
+  function reset() {
+    setFetched([]);
+    setFailed([]);
+    setUrls("");
+    setText("");
+    setTitle("");
+  }
+
+  const pasted = { action: "extract_source", ...scope, origin: "paste", url: title.startsWith("http") ? title : null, title, text };
+  const payloads = fetched.map((f) => ({
+    action: "extract_source", ...scope, origin: "url", url: f.url, title: f.title, text: f.text, published: f.published,
+  }));
 
   return (
     <div className="card stack" style={{ padding: 16 }}>
-      <h3>Add a source yourself</h3>
-      <Tabs value={tab} onChange={(t) => { setTab(t); setError(null); }} options={[{ value: "url", label: "URL" }, { value: "paste", label: "Paste" }]} />
+      <h3>Add sources yourself</h3>
+      <Tabs value={tab} onChange={(t) => { setTab(t); setError(null); }} options={[{ value: "url", label: "Links" }, { value: "paste", label: "Paste" }]} />
       {tab === "url" ? (
-        fetched ? (
-          <p className="small"><strong>{fetched.title || fetched.url}</strong> · {plural(fetched.text.split(/\s+/).length, "word")}</p>
-        ) : (
-          <div className="row">
-            <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" aria-label="Source URL" style={{ flex: 1 }} />
-            <button type="button" className="btn" disabled={busy || !url.trim()} onClick={fetchPage}>{busy ? "Fetching…" : "Fetch"}</button>
-          </div>
-        )
+        <>
+          {fetched.length === 0 && (
+            <>
+              <textarea
+                rows={4}
+                value={urls}
+                onChange={(e) => setUrls(e.target.value)}
+                placeholder={"One link per line\nhttps://…\nhttps://…"}
+                aria-label="Source links, one per line"
+                style={{ minHeight: 90 }}
+              />
+              <div className="row">
+                <button type="button" className="btn" disabled={progress !== null || links.length === 0} onClick={fetchPages}>
+                  {progress ?? (links.length > 1 ? `Fetch ${links.length} links` : "Fetch")}
+                </button>
+                {links.length > MAX_LINKS && <span className="small muted">Only the first {MAX_LINKS} are fetched.</span>}
+              </div>
+            </>
+          )}
+          {fetched.length > 0 && (
+            <ul className="small stack" style={{ gap: 4, paddingLeft: 18 }}>
+              {fetched.map((f) => (
+                <li key={f.url}><strong>{f.title || f.url}</strong> · {plural(f.text.split(/\s+/).length, "word")}</li>
+              ))}
+            </ul>
+          )}
+          {failed.length > 0 && (
+            <div className="notice small stack" style={{ gap: 4 }}>
+              <span>{plural(failed.length, "link")} couldn't be fetched. Paste their text on the Paste tab instead:</span>
+              {failed.map((f) => <span key={f.url} className="muted">{f.url}: {f.reason}</span>)}
+            </div>
+          )}
+        </>
       ) : (
         <>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title or URL" aria-label="Source title" />
@@ -416,14 +462,41 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
         </>
       )}
       <ErrorText>{error}</ErrorText>
-      {(fetched || (tab === "paste" && text.trim().length >= 200)) && (
+      {tab === "url" && fetched.length > 0 && (
+        <div className="row">
+          <AiAction<{ added: number }>
+            fn="research"
+            label={fetched.length > 1 ? `Pull findings from ${fetched.length} sources` : "Pull findings"}
+            payload={payloads[0]}
+            payloads={payloads}
+            merge={(rs) => ({ added: rs.reduce((n, r) => n + r.added, 0) })}
+            onDone={(r) => { reset(); onAdded(r.added); }}
+          />
+          <button type="button" className="btn btn-quiet btn-small" onClick={reset}>Start over</button>
+        </div>
+      )}
+      {tab === "paste" && text.trim().length >= 200 && (
         <AiAction<{ added: number }>
           fn="research"
           label="Pull findings"
-          payload={payload}
-          onDone={(r) => { setFetched(null); setUrl(""); setText(""); setTitle(""); onAdded(r.added); }}
+          payload={pasted}
+          onDone={(r) => { reset(); onAdded(r.added); }}
         />
       )}
     </div>
   );
+}
+
+interface FetchedPage { url: string; title: string; text: string; published: string }
+
+const MAX_LINKS = 10;
+
+/** Links from a pasted block: one per line, commas or spaces also fine, duplicates dropped. */
+function parseLinks(raw: string): string[] {
+  const seen = new Set<string>();
+  for (const part of raw.split(/[\s,]+/)) {
+    const link = part.trim();
+    if (/^https?:\/\/\S+$/i.test(link)) seen.add(link);
+  }
+  return [...seen];
 }

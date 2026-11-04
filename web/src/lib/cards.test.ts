@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardsToCsv, parseCards } from "./cards";
+import { cardDetail, cardsToCsv, parseCards } from "./cards";
 
 describe("parseCards", () => {
   it("reads CSV with a header row", () => {
@@ -50,5 +50,21 @@ opinion,,maybe,`);
     const { rows } = parseCards(`[{"type":"opinion","claim":"a, with comma","citation":"internal","tags":["x","y"]}]`);
     const again = parseCards(cardsToCsv([rows[0].card!]));
     expect(again.rows[0].card).toEqual(rows[0].card);
+  });
+});
+
+describe("cardDetail", () => {
+  const claim = "Mid-market teams stall at data prep.";
+  it("drops a detail that only repeats the claim", () => {
+    expect(cardDetail(claim, "Mid-market teams stall at data prep")).toBe("");
+  });
+  it("keeps only what follows when the detail opens with the claim", () => {
+    expect(cardDetail(claim, "Mid-market teams stall at data prep. In 14 of 40 calls, cleaning took months.")).toBe("In 14 of 40 calls, cleaning took months.");
+  });
+  it("keeps an unrelated detail as it is", () => {
+    expect(cardDetail(claim, "Seen in 14 of 40 calls.")).toBe("Seen in 14 of 40 calls.");
+  });
+  it("returns nothing for an empty detail", () => {
+    expect(cardDetail(claim, "  ")).toBe("");
   });
 });

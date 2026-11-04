@@ -967,3 +967,10 @@ ul.memory-flags li.link { border-left-color: var(--pencil); background: var(--pe
 ul.memory-flags q { font: 14.5px/1.5 var(--font-doc); }
 .memory-earlier { display: grid; gap: 2px; width: 100%; padding: 8px 10px; background: var(--surface); border-radius: 6px; }
 .memory-earlier q { font: italic 13.5px/1.5 var(--font-doc); color: var(--muted); }
+
+textarea.prompt-edit {
+  width: 100%;
+  font: 13px/1.6 var(--font-mono);
+  min-height: 160px;
+  resize: vertical;
+}

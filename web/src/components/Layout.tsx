@@ -159,6 +159,7 @@ export function Layout({ children }: { children: ReactNode }) {
             )}
             <NavLink to="/team" className="nav-link">Team &amp; settings</NavLink>
             <NavLink to="/ai" className="nav-link">AI provider &amp; models</NavLink>
+            <NavLink to="/prompts" className="nav-link">Prompts</NavLink>
           </div>
 
           <div className="sidebar-foot">

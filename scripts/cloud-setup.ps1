@@ -20,8 +20,14 @@ if (-not $Ref) {
 }
 
 function Supabase {
-  & npx -y supabase@2 @args
-  if ($LASTEXITCODE -ne 0) { throw "supabase $($args -join ' ') failed (exit $LASTEXITCODE). See the message above." }
+  # Explicit parameter: in Windows PowerShell 5.1, splatting @args to npx passed nothing,
+  # so every command ran as a bare "supabase" and printed its help.
+  param([Parameter(ValueFromRemainingArguments = $true)][string[]]$CliArgs)
+  & npx -y supabase@2 $CliArgs
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "supabase $($CliArgs -join ' ') failed (exit $LASTEXITCODE). See the message above." -ForegroundColor Red
+    exit 1
+  }
 }
 
 Write-Host "1/5 Checking you're signed in to Supabase (the first run downloads the Supabase CLI; this can take a minute)..."

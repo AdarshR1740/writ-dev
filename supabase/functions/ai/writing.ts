@@ -19,6 +19,7 @@ import {
   type SectionRow,
 } from "../_shared/context.ts";
 import type { Prepared } from "./prepared.ts";
+import { promptSet } from "../_shared/prompt-overrides.ts";
 
 const str = { type: "string" };
 const obj = (properties: Record<string, unknown>): JsonSchema => ({
@@ -71,20 +72,28 @@ function task<T>(
 // Analysis (before the outline)
 // ---------------------------------------------------------------------------
 
-const ANALYSIS_SYSTEM = `You analyse reviewed research for one piece of B2B content before it is
-outlined. You don't write the piece. Find where the real substance is:
+export const ANALYSIS_SYSTEM = `ROLE
+You analyse reviewed research for one piece of B2B content before it is outlined. You do not write the piece. Your job is to show the writer where the real substance is.
 
-- tensions: where sources disagree with each other, or where evidence is mixed.
-- consensus_vs_insight: where the company's own insights (items marked "card") confirm or contradict
-  what other sources say. These are the strongest angles: "everyone says X; our calls say Y".
-- gaps: important questions for this reader that no approved item answers. For each, write one
-  specific question the company's subject-matter expert could answer from experience.
-- contract_suggestions: changes the research suggests for the reader contract, e.g. an expectation
-  the search landscape shows readers need, or one the evidence can't support. The writer decides;
-  suggest nothing if the contract already fits.
+WHAT YOU RECEIVE
+- <brief> and <reader_contract>: what the piece is about and what the reader expects.
+- <approved_research>: numbered items, written [1], [2], and so on. Items from the company's own insight cards are marked "card". Everything else is from outside sources.
 
-Refer to items by their number. Be concrete and brief. Return empty lists when there is nothing real
-to say; don't pad.`;
+STEPS
+1. Read every approved item.
+2. Look for each of the four things below. Take them one at a time.
+3. For each thing you find, write one short, concrete entry. Refer to items by their number.
+
+THE FOUR THINGS
+- tensions: places where two or more items disagree, or where the evidence is mixed. Entry: "text" says what disagrees; "items" lists the item numbers.
+- consensus_vs_insight: places where a "card" item confirms or contradicts what the outside items say. These are the strongest angles ("everyone says X; our own calls say Y"). Entry: "text" says what the consensus is and what the company's view is; "items" lists the numbers.
+- gaps: important questions for this reader that no approved item answers. Entry: "text" names the gap; "expert_question" is ONE specific question the company's own expert could answer from experience.
+- contract_suggestions: changes the research suggests for the reader contract, such as an expectation readers clearly need that the contract lacks, or one the evidence can't support. Entry: "change" says what to change; "why" says why. The writer decides.
+
+RULES
+- Use only the approved items. Don't bring in outside facts.
+- Be concrete and brief: one or two sentences per entry.
+- If there is nothing real for one of the four things, return an empty list for it. Never pad.`;
 
 const analysisSchema = obj({
   tensions: list(obj({ text: str, items: list({ type: "integer" }) })),
@@ -105,7 +114,8 @@ async function prepareAnalysis(userId: string, body: Record<string, unknown>): P
     ["gaps", "analysis.gaps"],
     ["contract_suggestions", "analysis.contract_suggestions"],
   ].filter(([, path]) => !on(piece, path)).map(([field]) => field);
-  const system = off.length ? `${ANALYSIS_SYSTEM}\n\nThis format doesn't use: ${off.join(", ")}. Return empty lists for those.` : ANALYSIS_SYSTEM;
+  const base = (await promptSet(piece.company_id))("analysis", ANALYSIS_SYSTEM);
+  const system = off.length ? `${base}\n\nThis format doesn't use: ${off.join(", ")}. Return empty lists for those.` : base;
   return task<Record<string, unknown>>("analysis", "reason", piece, userId, system, context, analysisSchema, 2500,
     async (data, cost, model) => {
       const { error } = await admin.from("pieces").update({ analysis: data }).eq("id", piece.id);
@@ -119,17 +129,34 @@ async function prepareAnalysis(userId: string, body: Record<string, unknown>): P
 // Outline (conversation, like the contract)
 // ---------------------------------------------------------------------------
 
-const OUTLINE_SYSTEM = `You help a writer outline one piece of B2B content. The writer owns the outline;
-you suggest, they decide.
+export const OUTLINE_SYSTEM = `ROLE
+You are a writer outlining one piece of B2B content.
 
-Build the outline from the reader contract, the reviewed research and the analysis. Every contract
-expectation must be covered by at least one section; list which ones (by number) each section serves.
-Follow the intent: "what are X" puts the list up front and then a section per item; "how to" is steps;
-"should I" is a decision framework. Use the format profile only for structural habits (how pieces in
-this format open and are organised). Don't plan word counts.
+WHAT YOU RECEIVE
+- <brief>, <reader_contract>: the subject and the numbered expectations the piece owes the reader.
+- <analysis>: tensions, company insights and gaps found in the research.
+- <approved_research>: numbered items.
+- <format_profile> (sometimes): how pieces in this format are usually organised.
+- <current_outline> and <conversation>: the outline now, and what the writer and you have said.
 
-Each turn: answer briefly in "reply" (what you changed and why, or a question), and return the full
-suggested outline with a heading and a one-line purpose per section.`;
+STEPS
+1. Choose the shape from the reader's intent:
+   - "what are X": the list up front, then one section per item
+   - "how to": steps in order
+   - "should I": a decision framework
+2. Write the sections in a sensible order. Each section gets a heading and a one-line purpose.
+3. For each section, list the numbers of the contract expectations it serves.
+4. Check that every contract expectation is served by at least one section. If one is not, add or change a section, or say in "reply" that it is uncovered.
+5. If the writer sent a message, apply it and keep the parts they didn't mention.
+
+RULES
+- Headings are specific to the sub-topic. Never use "Introduction", "Overview" or "Conclusion".
+- Use the format profile only for structure (how pieces open and are organised), not for wording.
+- Don't plan word counts.
+
+OUTPUT (both fields are required)
+- reply: 1 to 3 sentences to the writer: what you changed and why, or one question.
+- sections: the FULL outline. Each section has "heading", "purpose" (one line) and "expectations" (a list of contract expectation numbers).`;
 
 const outlineSchema = obj({
   reply: str,
@@ -169,7 +196,7 @@ ${(current ?? []).map((s) => `${s.position}. ${s.heading} (${s.purpose})`).join(
 ${convo || "(No messages yet. Suggest a first outline.)"}
 </conversation>`;
   return task<{ reply: string; sections: { heading: string; purpose: string; expectations: number[] }[] }>(
-    "outline_suggest", "reason", piece, userId, OUTLINE_SYSTEM, user, outlineSchema, 2000,
+    "outline_suggest", "reason", piece, userId, (await promptSet(piece.company_id))("outline", OUTLINE_SYSTEM), user, outlineSchema, 2000,
     async (data, cost, model) => {
       if (message) {
         await admin.from("thread_messages").insert({ company_id: piece.company_id, thread_id: thread, role: "writer", content: message, created_by: userId });
@@ -188,27 +215,41 @@ ${convo || "(No messages yet. Suggest a first outline.)"}
 // Section brief: crisp bullets, never prose
 // ---------------------------------------------------------------------------
 
-const BRIEF_SYSTEM = `You write the brief for one section of a piece. The writer will write the section
-by hand from your bullets, so the bullets must carry content, not style.
+export const BRIEF_SYSTEM = `ROLE
+You write the brief for ONE section of a piece. The writer will write the section by hand from your bullets, so the bullets must carry content, not style.
 
-Rules:
-- Fragments and keywords only. No full sentences, no transitions, no adjectives, nothing quotable.
-  Elaborate phrasing would leak into the writer's style and make the text read as AI-written.
-- One idea per bullet, in a sensible order for the section.
-- Use the pattern "label: content", e.g. "adopter: Unilever, 2023" or "limit: data integration cost".
-- Start with an "answer:" bullet: the section's core answer in a few words, so the writer can open
-  with it (readers and AI answer engines both look for it first).
-- Cover every contract expectation this section owes.
-- Use only approved research. Every bullet that rests on a fact lists the item numbers it uses in refs.
-  Bullets for the writer's own argument or experience have empty refs.
-- Where the analysis shows a tension or a company insight that contradicts the consensus, include it.
-- 4 to 10 bullets.`;
+WHAT YOU RECEIVE
+- <section>: the heading, its purpose, and the contract expectations it owes.
+- <outline>, <analysis>: the whole piece's plan and what the research found.
+- <section_research>: numbered approved items, [1], [2], and so on.
+
+STEPS
+1. Read the expectations this section owes. Each one must be covered by at least one bullet.
+2. Read the approved items. Pick the facts this section needs.
+3. If the analysis shows a tension, or a company insight that contradicts the consensus, and it belongs in this section, add a bullet for it.
+4. Write 4 to 10 bullets in a sensible order. Put the "answer:" bullet first.
+
+BULLET RULES
+- Format: "label: content". Labels are short, such as answer, what, use, adopter, limit, cost, our view.
+- Fragments and keywords only. No full sentences, no transitions, no adjectives, nothing quotable. Elaborate phrasing would leak into the writer's style and make the text read as AI-written.
+- One idea per bullet.
+- The first bullet is "answer:": the section's core answer in a few words, so the writer can open with it.
+- Use only approved research. Never add a fact that is not in an item.
+- "refs" lists the numbers of the items a bullet uses. A bullet that is the writer's own argument or experience has an empty list.
+
+EXAMPLE (invented subject; shows the style only)
+- answer: virtual copy of the supply network; tests changes before they happen  (refs: [4])
+- adopter: Acme Foods, 2023  (refs: [7])
+- limit: data integration cost  (refs: [9])
+- our view: customers stall at data prep  (refs: [])`;
 
 // Short, single-section formats (a LinkedIn post, a social post).
-const BRIEF_SHORT = `This is a short, single-section format. Use 3 to 6 bullets in this order: "hook:" (the
-opening line's idea, not its wording), "answer:" (the one point), "proof:" (one or two facts or a story,
-with refs), "close:" (the takeaway or question; a call to action only if the brief has one).
-Overrides the "start with answer" rule above.`;
+export const BRIEF_SHORT = `SHORT FORMAT (this overrides the steps above)
+This is a short, single-section format. Write 3 to 6 bullets in exactly this order:
+- hook: the idea of the opening line (not its wording)
+- answer: the one point
+- proof: one or two facts or a story, with refs
+- close: the takeaway or a question; add a call to action only if the brief has one`;
 
 const briefSchema = obj({ bullets: list(obj({ text: str, refs: list({ type: "integer" }) })) });
 
@@ -223,7 +264,10 @@ async function prepareBrief(userId: string, body: Record<string, unknown>): Prom
   const context = single
     ? await contextFor(piece, ["brief", "piece_items"], section)
     : await contextFor(piece, ["outline", "analysis", "section_items"], section);
-  const system = single ? `${BRIEF_SYSTEM}\n\n${BRIEF_SHORT}` : BRIEF_SYSTEM;
+  const prompts = await promptSet(piece.company_id);
+  const system = single
+    ? `${prompts("brief.base", BRIEF_SYSTEM)}\n\n${prompts("brief.short", BRIEF_SHORT)}`
+    : prompts("brief.base", BRIEF_SYSTEM);
   return task<{ bullets: { text: string; refs: number[] }[] }>("section_brief", "reason", piece, userId, system, context,
     briefSchema, 800, async (data, cost, model) => {
       const bullets = data.bullets.map((b) => ({
@@ -239,11 +283,29 @@ async function prepareBrief(userId: string, body: Record<string, unknown>): Prom
 // Optional AI draft (manual writing is the default)
 // ---------------------------------------------------------------------------
 
-const DRAFT_SYSTEM = `You draft one section of a piece for a company's writer, who will edit it. Follow
-the brief exactly, in order, opening with its "answer:" point in one or two plain sentences. Use only
-the approved research for facts and figures, and say where each figure comes from; don't add any other
-numbers, names or claims. Write in the company's core voice and the habits of the format profile. No
-heading, no preamble, no closing summary, no "In conclusion". Plain prose the writer can edit.`;
+export const DRAFT_SYSTEM = `ROLE
+You draft ONE section of a piece for a company's writer, who will edit it afterwards.
+
+WHAT YOU RECEIVE
+- <section>: the heading and purpose. <outline>: the whole piece's plan.
+- <section_research> (or <approved_research>): numbered approved items.
+- <core_voice>, <format_profile>, <voice_memory>: how the company writes.
+- <brief>: the bullets to follow.
+
+STEPS
+1. Follow the brief bullets in order. Every bullet must appear in the draft.
+2. Open with the "answer:" bullet's point, in one or two plain sentences.
+3. For each fact or figure, use the approved item it comes from and say in the text where it comes from.
+4. Write in the company's core voice, with the habits of the format profile, and obey the voice memory.
+
+RULES
+- Use only the approved research for facts and figures. Do NOT add any other number, name, date or claim.
+- Bullets without a research item are the writer's own view. Write them as that view and add no facts.
+- No heading, no preamble, no closing summary, no "In conclusion".
+- Plain prose the writer can edit.
+
+OUTPUT
+- text: the section text only.`;
 
 async function prepareDraft(userId: string, body: Record<string, unknown>): Promise<Prepared> {
   const { piece, section } = await sectionFor(userId, body);
@@ -255,7 +317,7 @@ async function prepareDraft(userId: string, body: Record<string, unknown>): Prom
     single ? ["brief", "piece_items", "core_voice", "format_profile", "voice_memory"]
       : ["outline", "section_items", "core_voice", "format_profile", "voice_memory"], section);
   const user = `${context}\n\n<brief>\n${(section.brief ?? []).map((b) => `- ${b.text}`).join("\n") || "(no brief: write from the section and research)"}\n</brief>`;
-  return task<{ text: string }>("section_draft", "write", piece, userId, DRAFT_SYSTEM, user, obj({ text: str }), 2500,
+  return task<{ text: string }>("section_draft", "write", piece, userId, (await promptSet(piece.company_id))("draft", DRAFT_SYSTEM), user, obj({ text: str }), 2500,
     async (data, cost, model) => {
       const patch: Record<string, unknown> = { ai_draft: data.text };
       if (!section.content.trim()) patch.content = data.text;
@@ -270,11 +332,29 @@ async function prepareDraft(userId: string, body: Record<string, unknown>): Prom
 // Checks on the writer's text
 // ---------------------------------------------------------------------------
 
-const GRAMMAR_SYSTEM = `You are a grammar checker, like a conventional spelling and grammar plugin. Suggest
-only corrections to spelling, grammar and punctuation. Never rephrase for style, tone, clarity or
-length, and never change word choice that is correct. "original" must be an exact substring of the
-text, short (the few words around the error), and appear only once if possible. Return an empty list
-when the text is correct.`;
+export const GRAMMAR_SYSTEM = `ROLE
+You are a grammar checker, like a conventional spelling and grammar plugin.
+
+WHAT YOU RECEIVE
+- <text>: the writer's text.
+
+STEPS
+1. Read the text one sentence at a time.
+2. For each spelling mistake, grammar mistake or punctuation mistake, write one suggestion.
+
+RULES
+- Correct ONLY spelling, grammar and punctuation.
+- Never change style, tone, clarity, length or word choice that is already correct.
+- Never rewrite a sentence. Never suggest a "better" way to say something.
+- If the text is correct, return an empty list.
+
+OUTPUT (for each suggestion)
+- original: the few words around the error, copied exactly from the text. It must appear in the text word for word, and be short.
+- replacement: the same words with the error fixed.
+- reason: a few words, such as "missing comma" or "spelling".
+
+EXAMPLE
+original: "their going to launch"   replacement: "they're going to launch"   reason: "their / they're"`;
 
 const grammarSchema = obj({ suggestions: list(obj({ original: str, replacement: str, reason: str })) });
 
@@ -284,21 +364,38 @@ async function prepareGrammar(userId: string, body: Record<string, unknown>): Pr
   const text = String(body.text ?? section.content).trim();
   if (!text) throw new UserError("Write something first.");
   return task<{ suggestions: { original: string; replacement: string; reason: string }[] }>("grammar_check", "extract",
-    piece, userId, GRAMMAR_SYSTEM, `<text>\n${text}\n</text>`, grammarSchema, 800, async (data, cost, model) => ({
+    piece, userId, (await promptSet(piece.company_id))("grammar", GRAMMAR_SYSTEM), `<text>\n${text}\n</text>`, grammarSchema, 800, async (data, cost, model) => ({
       suggestions: data.suggestions.filter((s) => s.original && s.original !== s.replacement && text.includes(s.original)),
       cost_usd: cost,
       model,
     }));
 }
 
-const FACT_SYSTEM = `You check a section a writer wrote against the research they approved. Flag every
-sentence that states a number, date, name, ranking or factual claim that either:
-- "unsupported": isn't backed by any approved item, or
-- "mismatch": contradicts or misstates an approved item (wrong figure, year, scope or attribution).
+export const FACT_SYSTEM = `ROLE
+You check a section a writer wrote against the research they approved. You do not edit the text.
 
-Opinions, arguments and the writer's own experience are fine; don't flag them. Quote the sentence
-exactly. For mismatches, give the item number; for unsupported claims use 0. Return an empty list when
-everything checks out.`;
+WHAT YOU RECEIVE
+- <section_research> (or <approved_research>): numbered approved items, [1], [2], and so on.
+- <written_section>: the writer's text.
+
+STEPS
+1. Go through the written section sentence by sentence.
+2. Pick out each sentence that states a number, date, name, ranking or other factual claim.
+3. For each one, look for an approved item that supports it.
+   - Found and it matches: say nothing.
+   - Found but the text gets it wrong (wrong figure, year, scope or attribution): flag it as "mismatch".
+   - Not found in any approved item: flag it as "unsupported".
+
+RULES
+- Opinions, arguments and the writer's own experience are fine. Don't flag them.
+- Judge only against the approved items. Do not use your own knowledge to decide what is true.
+- If everything checks out, return an empty list.
+
+OUTPUT (for each flag)
+- sentence: the sentence copied exactly from the written section.
+- kind: "unsupported" or "mismatch".
+- issue: one plain sentence saying what is wrong. For a mismatch, say what the item says.
+- item: the item number for a mismatch. Use 0 for "unsupported".`;
 
 const factSchema = obj({
   flags: list(obj({ sentence: str, kind: { type: "string", enum: ["unsupported", "mismatch"] }, issue: str, item: { type: "integer" } })),
@@ -314,7 +411,7 @@ async function prepareFacts(userId: string, body: Record<string, unknown>): Prom
   const context = await contextFor(piece, [single ? "piece_items" : "section_items"], section);
   const user = `${context}\n\n<written_section>\n${section.content}\n</written_section>`;
   return task<{ flags: { sentence: string; kind: string; issue: string; item: number }[] }>("fact_check", "reason", piece,
-    userId, FACT_SYSTEM, user, factSchema, 1000, async (data, cost, model) => {
+    userId, (await promptSet(piece.company_id))("fact", FACT_SYSTEM), user, factSchema, 1000, async (data, cost, model) => {
       const result = {
         checked_at: new Date().toISOString(),
         flags: data.flags.map((f) => ({ ...f, item_id: items.find((i) => i.n === f.item)?.id ?? null })),
@@ -325,10 +422,31 @@ async function prepareFacts(userId: string, body: Record<string, unknown>): Prom
     });
 }
 
-const CONTRACT_CHECK_SYSTEM = `You check written text against a reader contract. For each expectation,
-decide whether the text delivers it: "met", "partly" or "missing". For met and partly, quote the
-shortest passage from the text that shows it (exactly as written). For partly and missing, say in one
-plain sentence what's missing. Judge only what the text actually says. There is no score.`;
+export const CONTRACT_CHECK_SYSTEM = `ROLE
+You check written text against a reader contract. There is no score.
+
+WHAT YOU RECEIVE
+- <reader_contract>: the core question and a numbered list of expectations.
+- <text>: the text to check.
+
+STEPS
+For EACH numbered expectation, in order:
+1. Search the text for what delivers it.
+2. Decide the status:
+   - "met": the text fully delivers it.
+   - "partly": the text delivers some of it.
+   - "missing": the text does not deliver it.
+3. Fill in the evidence and the gap as described below.
+
+RULES
+- Judge only what the text actually says, not what it might mean or what the writer probably intended.
+- Return one result for every expectation, using its number.
+
+OUTPUT (for each expectation)
+- expectation: its number.
+- status: "met", "partly" or "missing".
+- evidence: for met and partly, the shortest passage from the text that shows it, copied exactly. For missing, an empty string.
+- gap: for partly and missing, one plain sentence saying what is missing. For met, an empty string.`;
 
 const contractCheckSchema = obj({
   results: list(obj({ expectation: { type: "integer" }, status: { type: "string", enum: ["met", "partly", "missing"] }, evidence: str, gap: str })),
@@ -363,7 +481,7 @@ ${owed.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}
 ${text}
 </text>`;
   return task<{ results: { expectation: number; status: string; evidence: string; gap: string }[] }>("contract_check", "reason",
-    piece, userId, CONTRACT_CHECK_SYSTEM, user, contractCheckSchema, 1200, async (data, cost, model) => {
+    piece, userId, (await promptSet(piece.company_id))("contract_check", CONTRACT_CHECK_SYSTEM), user, contractCheckSchema, 1200, async (data, cost, model) => {
       const result = {
         checked_at: new Date().toISOString(),
         results: owed.map((e, i) => {
@@ -387,57 +505,67 @@ ${text}
 // guidelines, as checklists with evidence, never a score or keyword quota.
 // ---------------------------------------------------------------------------
 
-const SEO_GEO_BASE = `You review a piece of B2B content for search (SEO) and for being cited by AI answer
-engines such as Google AI Overviews, ChatGPT search and Perplexity (GEO). You give a checklist, not
-a score. Never suggest keyword density, repeating the keyword, term quotas or padding; a reader-first
-piece that answers the intent well beats one tuned to a tool. The search-landscape items ([serp])
-show the intent, what ranking pages cover and skip, and what people ask.
+export const SEO_GEO_BASE = `ROLE
+You review a piece of B2B content for search (SEO) and for being cited by AI answer engines such as Google AI Overviews, ChatGPT search and Perplexity (GEO). You give a checklist, not a score.
 
-For every check, return status "fine", "improve" or "n/a", the evidence you saw (quote it when you
-can), and for "improve" one concrete, specific fix.`;
+WHAT YOU RECEIVE
+- <brief>, <reader_contract>: the subject, the primary keyword and what the reader expects.
+- <search_landscape>: what ranking pages cover and skip, and what people ask.
+- Either an <outline> or the finished <piece>. The list of checks below says which.
 
-const SEO_GEO_CHECKS = {
+STEPS
+1. Read the checks listed below.
+2. For EACH check, look at the outline or piece and decide: "fine", "improve" or "n/a".
+3. For "improve", write one concrete, specific fix.
+
+RULES
+- Never suggest keyword density, repeating the keyword, term quotas or padding. A reader-first piece that answers the intent well beats one tuned to a tool.
+- Judge only what you can see in the outline or piece. Use "n/a" when a check doesn't apply.
+
+OUTPUT (for each check)
+- area: "seo" or "geo", as the check is grouped below.
+- check: the check's key (the word before the colon, such as "answer_first").
+- label: a short plain-English name for the check.
+- status: "fine", "improve" or "n/a".
+- evidence: what you saw, quoted from the outline or piece when you can.
+- fix: for "improve", one concrete fix. Otherwise an empty string.`;
+
+export const SEO_GEO_CHECKS = {
   outline: `Checks for an OUTLINE (judge the plan, not prose):
+
 SEO
 - intent: the outline's shape serves the search intent of the primary keyword.
-- title: the working title states the topic plainly with the primary keyword near the start, in
-  about 60 characters or fewer.
-- headings: every section heading is descriptive and specific to its sub-topic; no generic
-  placeholders such as "Introduction", "The current landscape", "Key considerations" or "Conclusion".
+- title: the working title states the topic plainly with the primary keyword near the start, in about 60 characters or fewer.
+- headings: every section heading is descriptive and specific to its sub-topic; no generic placeholders such as "Introduction", "The current landscape", "Key considerations" or "Conclusion".
 - answer_first: the first section delivers the core answer instead of background.
-- questions: the questions people ask (from the search landscape) are covered by a section, or
-  deliberately left out for a reason that fits the contract.
+- questions: the questions people ask (from the search landscape) are covered by a section, or deliberately left out for a reason that fits the contract.
 - coverage_gap: the outline covers at least one thing ranking pages skip or get wrong.
+
 GEO
 - extractable_sections: sections are planned so each can open with a short, standalone answer.
-- structure: comparisons are planned as tables and procedures as numbered steps where the content
-  calls for it.
+- structure: comparisons are planned as tables and procedures as numbered steps where the content calls for it.
 - first_party: at least one section is built on the company's own insight or data.`,
   final: `Checks for the FINISHED PIECE:
+
 SEO
 - intent: the piece serves the search intent of the primary keyword.
-- title: the title states the topic with the primary keyword near the start, about 60 characters or
-  fewer.
+- title: the title states the topic with the primary keyword near the start, about 60 characters or fewer.
 - headings: headings are descriptive and specific; no generic placeholders.
 - answer_first: the opening (roughly the first 150 words) gives the core answer.
 - questions: the questions people ask are answered where they fit.
-- internal_links: name 2 to 4 topics on the company's own site the piece should link to, with
-  suggested anchor text (status "improve" with the suggestions, or "n/a").
+- internal_links: name 2 to 4 topics on the company's own site the piece should link to, with suggested anchor text (status "improve" with the suggestions, or "n/a").
 - scannability: lists and short paragraphs where readers scan; no walls of text.
+
 GEO
-- answer_capsules: key sections open with a concise, standalone answer (about 40 to 60 words) that
-  an answer engine could quote as is.
-- self_contained_claims: important claims name their subject and context in the same sentence, so
-  they still make sense when quoted alone.
-- named_entities: real companies, products, standards and frameworks are named, not described
-  vaguely.
+- answer_capsules: key sections open with a concise, standalone answer (about 40 to 60 words) that an answer engine could quote as is.
+- self_contained_claims: important claims name their subject and context in the same sentence, so they still make sense when quoted alone.
+- named_entities: real companies, products, standards and frameworks are named, not described vaguely.
 - attribution: figures and claims say where they come from, in the text.
 - structure: comparisons use tables and procedures use numbered steps where it helps.
-- first_party: the piece includes the company's own insight or data, which answer engines can't find
-  elsewhere.
+- first_party: the piece includes the company's own insight or data, which answer engines can't find elsewhere.
 - freshness: figures carry dates.
-Also write a meta title (60 characters or fewer, primary keyword near the start) and a meta
-description (140 to 155 characters, plain value statement with the keyword once).`,
+
+Also write a meta title (60 characters or fewer, primary keyword near the start) and a meta description (140 to 155 characters, plain value statement with the keyword once).`,
 };
 
 const checkItem = obj({
@@ -474,7 +602,8 @@ async function prepareSeoGeo(userId: string, body: Record<string, unknown>): Pro
   // Wiring: brief (keyword), contract, search landscape, and the outline or piece. No voice.
   const context = await contextFor(piece, ["brief", "contract"]);
   const user = `${context}\n\n<search_landscape>\n${landscape}\n</search_landscape>\n\n${subject}`;
-  const system = `${SEO_GEO_BASE}\n\n${SEO_GEO_CHECKS[scope]}${
+  const prompts = await promptSet(piece.company_id);
+  const system = `${prompts("seo.base", SEO_GEO_BASE)}\n\n${prompts(`seo.${scope}`, SEO_GEO_CHECKS[scope])}${
     areas.length === 1 ? `\n\nThis format only uses the ${areas[0].toUpperCase()} checks: return only those.` : ""}`;
   const schema = scope === "final"
     ? obj({ checks: list(checkItem), meta_title: str, meta_description: str })
@@ -497,27 +626,38 @@ async function prepareSeoGeo(userId: string, body: Record<string, unknown>): Pro
 // Repurposing: a plan in front of the target format's normal workflow
 // ---------------------------------------------------------------------------
 
-const REPURPOSE_BASE = `You plan how to repurpose a company's finished content into another format. You
-plan; the writer decides and writes. Use only what the source pieces and their approved research
-contain; don't invent facts. Refer to research items by their number. Follow the writer's specific
-requirements when given.`;
+export const REPURPOSE_BASE = `ROLE
+You plan how to repurpose a company's finished content into another format. You plan; the writer decides and writes.
 
-const REPURPOSE_SHAPES: Record<string, string> = {
-  split: `SPLIT one source into several pieces in the target format. Find the distinct key points worth a
-piece of their own (usually 3 to 7; fewer is fine if the source doesn't support more). Each entry
-is one new piece: a heading that states the point, an angle (the story or framing that makes this
-piece different from the others), notes for the writer, and the research items that support it.
-Points must not overlap; similar is fine, repeated is not. Leave sections empty unless the target
-format has an outline.`,
-  adapt: `ADAPT one source into exactly one piece in a different medium. Return one entry. Map the source
-onto the target format's structure: list the target sections in order, each with a purpose saying
-which source sections or points it draws on. Use the target format's fixed outline when it has one.
-In not_translated, list what doesn't carry over to the new medium (tables, long citations, visual
-references) and how to handle each.`,
-  combine: `COMBINE several sources into exactly one longer piece. Return one entry. Group the sources'
-points into themes and propose the sections in a sensible order, each with a purpose naming which
-sources it draws on. In gaps, list the connecting material none of the sources covers (it will need
-new research or the writer's own knowledge).`,
+WHAT YOU RECEIVE
+- One or more <source> pieces: their sections, and their approved research as numbered items [1], [2].
+- <target_format>: the format to produce, its outline and contract mode, and its style profile.
+- <specific_requirements>: extra instructions from the writer.
+
+RULES
+- Use only what the source pieces and their approved research contain. Never invent facts.
+- Refer to research items by their number.
+- Follow the writer's specific requirements when given.
+
+OUTPUT FIELDS
+- entries: the new pieces. Each has heading, angle, notes (for the writer), items (research item numbers) and sections (heading + purpose).
+- not_translated: what doesn't carry over to the new medium. Empty unless the shape below asks for it.
+- gaps: material the sources don't cover. Empty unless the shape below asks for it.`;
+
+export const REPURPOSE_SHAPES: Record<string, string> = {
+  split: `SHAPE: SPLIT one source into several pieces in the target format.
+1. Find the distinct key points worth a piece of their own. Usually 3 to 7; fewer is fine if the source doesn't support more.
+2. Each entry is one new piece: "heading" states the point; "angle" is the story or framing that makes this piece different from the others; "notes" are for the writer; "items" are the research items that support it.
+3. Points must not overlap. Similar is fine; repeated is not.
+4. Leave "sections" empty unless the target format has an outline.`,
+  adapt: `SHAPE: ADAPT one source into exactly ONE piece in a different medium.
+1. Return exactly one entry.
+2. Map the source onto the target format's structure. List the target sections in order, each with a purpose saying which source sections or points it draws on. Use the target format's fixed outline when it has one.
+3. In "not_translated", list what doesn't carry over to the new medium (tables, long citations, visual references) and say how to handle each.`,
+  combine: `SHAPE: COMBINE several sources into exactly ONE longer piece.
+1. Return exactly one entry.
+2. Group the sources' points into themes. Propose the sections in a sensible order, each with a purpose naming which sources it draws on.
+3. In "gaps", list the connecting material none of the sources covers. It will need new research or the writer's own knowledge.`,
 };
 
 const repurposeSchema = obj({
@@ -574,7 +714,8 @@ Reader contract: ${recipe.contract?.mode ?? "full"}
 ${profile?.content?.trim() ? `Style profile:\n${profile.content.trim()}` : ""}
 </target_format>`;
   const user = `${parts.join("\n\n")}\n\n${target}\n\n<specific_requirements>\n${plan.instructions || "(none)"}\n</specific_requirements>`;
-  const system = `${REPURPOSE_BASE}\n\n${REPURPOSE_SHAPES[plan.shape]}`;
+  const prompts = await promptSet(plan.company_id);
+  const system = `${prompts("repurpose.base", REPURPOSE_BASE)}\n\n${prompts(`repurpose.${plan.shape}`, REPURPOSE_SHAPES[plan.shape])}`;
   return {
     companyId: plan.company_id,
     taskType: "reason",
@@ -605,15 +746,30 @@ ${profile?.content?.trim() ? `Style profile:\n${profile.content.trim()}` : ""}
 // Learning from the writer: edits and feedback -> voice memory suggestions
 // ---------------------------------------------------------------------------
 
-const LEARN_SYSTEM = `You learn how a company's writer wants their writing to read, from what they
-changed and what they said. You'll see: AI drafts next to what the writer kept, the assembled draft
-next to the version they published, and the writer's own messages during the piece.
+export const LEARN_SYSTEM = `ROLE
+You learn how a company's writer wants their writing to read, from what they changed and what they said.
 
-Suggest voice rules the writer would recognise as theirs: specific, behavioural and reusable across
-pieces ("Open with the claim, not the context"; "Never use 'leverage'"; "Numbers as digits"). Skip
-anything already in the core voice or the existing memory, anything that only applies to this topic,
-and anything you can't point to evidence for. For each rule, quote or describe the evidence briefly.
-Return at most 6 rules, or none.`;
+WHAT YOU RECEIVE
+- <core_voice> and <voice_memory>: the rules that already exist.
+- <ai_draft> next to <writer_kept>: an AI draft and what the writer kept.
+- <assembled_draft> next to <published_version>: what was assembled and what was finally published.
+- <writer_messages>: what the writer said during the piece.
+
+STEPS
+1. Compare each AI draft with what the writer kept, and the assembled draft with the published version. Note what the writer changed, cut or added, and notice patterns.
+2. Read the writer's messages for stated preferences.
+3. Turn each clear pattern into one voice rule.
+4. Drop any rule that is already in the core voice or the voice memory, that only applies to this topic, or that you cannot point to evidence for.
+
+GOOD RULES are specific, behavioural and reusable across pieces:
+- "Open with the claim, not the context."
+- "Never use 'leverage'."
+- "Write numbers as digits."
+BAD RULES are vague ("Be more engaging") or topic-specific ("Mention Acme in the intro").
+
+OUTPUT
+- rules: at most 6, or an empty list. Each has "rule" (one sentence) and "evidence" (a short quote or
+  description of what you saw).`;
 
 const learnSchema = obj({ rules: list(obj({ rule: str, evidence: str })) });
 
@@ -637,7 +793,7 @@ async function prepareLearn(userId: string, body: Record<string, unknown>): Prom
   }
   const context = await contextFor(piece, ["core_voice", "voice_memory"]);
   const user = `${context}\n\n${edits.join("\n\n")}\n\n${published}\n\n<writer_messages>\n${writerSaid.join("\n") || "(none)"}\n</writer_messages>`;
-  return task<{ rules: { rule: string; evidence: string }[] }>("learn_voice", "reason", piece, userId, LEARN_SYSTEM, user,
+  return task<{ rules: { rule: string; evidence: string }[] }>("learn_voice", "reason", piece, userId, (await promptSet(piece.company_id))("learn", LEARN_SYSTEM), user,
     learnSchema, 800, async (data, cost, model) => {
       await logEvent(piece, userId, "voice_learned", { suggestions: data.rules.length });
       return { rules: data.rules, cost_usd: cost, model };
