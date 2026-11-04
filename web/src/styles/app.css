@@ -974,3 +974,14 @@ textarea.prompt-edit {
   min-height: 160px;
   resize: vertical;
 }
+
+.step-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--rule); }
+.step-nav .btn { text-decoration: none; }
+
+ol.how-steps { list-style: none; counter-reset: step; display: grid; gap: 8px; padding: 0; margin: 0; }
+ol.how-steps li { counter-increment: step; display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; font-size: 14px; color: var(--muted); }
+ol.how-steps li::before { content: counter(step); display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--rule-strong); font-size: 12px; font-weight: 600; color: var(--muted); }
+ol.how-steps li.now { color: var(--ink); }
+ol.how-steps li.now::before { background: var(--pencil); border-color: var(--pencil); color: #fff; }
+ol.how-steps li.done::before { content: "✓"; background: var(--ok-soft, #ddf3e6); border-color: transparent; color: var(--ok, #145c38); }
+button.card.pick.picked { border-color: var(--pencil); box-shadow: inset 0 0 0 1px var(--pencil); }

@@ -12,6 +12,7 @@ import { CARD_TYPE_LABELS, type Card, type CardFields, type CardType } from "../
 import { useSetupStatus } from "../components/Layout";
 import { CardForm, emptyCard } from "../components/CardForm";
 import { AiAction, ErrorText, Loading, Modal, PromptHelper, Tabs } from "../components/ui";
+import { StepNav } from "../components/StepNav";
 
 type Mode = "insights" | "data";
 
@@ -168,6 +169,7 @@ export function CardsPage({ mode }: { mode: Mode }) {
         </div>
       )}
 
+      <StepNav />
       {modal === "add" && (
         <Modal title={mode === "data" ? "Add a data point" : "Add an insight"} onClose={() => setModal(null)}>
           <CardForm

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { supabase, errorMessage } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { formatDate, plural } from "../lib/format";
-import type { InputMethod } from "../lib/sections";
+import type { InputMethod, MaterialCopy } from "../lib/sections";
 import type { ContextDocument, ContextInput, Proposal } from "../lib/types";
 import { AddMaterial } from "./AddMaterial";
 import { diffStats, Redline } from "./Redline";
@@ -33,13 +33,13 @@ export function DocumentWorkbench({
   documentId,
   companyId,
   methods,
-  placeholder,
+  copy,
   onChanged,
 }: {
   documentId: string;
   companyId: string;
   methods: InputMethod[];
-  placeholder: string;
+  copy: MaterialCopy;
   onChanged?: () => void;
 }) {
   const { data, error, loading, reload } = useLoad(() => load(documentId), [documentId]);
@@ -170,7 +170,7 @@ export function DocumentWorkbench({
       </div>
 
       <aside className="rail" aria-label="Sources">
-        <AddMaterial companyId={companyId} documentId={doc.id} methods={methods} placeholder={placeholder} onAdded={reload} />
+        <AddMaterial companyId={companyId} documentId={doc.id} methods={methods} copy={copy} onAdded={reload} />
         <div className="row">
           <h3>Sources</h3>
           <span className="spacer" />

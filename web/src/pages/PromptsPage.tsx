@@ -3,7 +3,7 @@ import { callFunction, errorMessage, supabase } from "../lib/supabase";
 import { useCompany, useSession } from "../lib/session";
 import { useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
-import { DOC_SECTIONS, DATA_PROMPT, FORMAT_PROMPT, INSIGHT_PROMPT } from "../lib/sections";
+import { DOC_SECTIONS, DATA_PROMPT, FORMAT_PROMPT, INSIGHT_PROMPT, VOICE_MEMORY_PROMPT } from "../lib/sections";
 import { CopyButton, ErrorText, Lede, Loading } from "../components/ui";
 
 interface Unit {
@@ -56,6 +56,15 @@ const OWN_TOOL: Entry[] = [
     tier: "write",
     receives: ["Examples you share with your own AI tool"],
     units: [{ label: "Prompt", text: FORMAT_PROMPT("Example format") }],
+  },
+  {
+    id: "own-voice-memory",
+    group: "Run in your own AI tool",
+    title: "Voice memory rules",
+    when: "Shown on the Voice memory page. Paste the list it returns into the box on that page.",
+    tier: "extract",
+    receives: ["Your own AI tool's memory of how you write"],
+    units: [{ label: "Prompt", text: VOICE_MEMORY_PROMPT }],
   },
   {
     id: "own-insights",

@@ -14,6 +14,7 @@ import {
 import { AiAction, ErrorText, Loading, Tabs } from "./ui";
 import { normalise } from "../lib/recipes";
 import { cardDetail } from "../lib/cards";
+import { MAX_LINKS, parseLinks } from "../lib/links";
 
 interface Loaded {
   items: ResearchItem[];
@@ -489,14 +490,3 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
 
 interface FetchedPage { url: string; title: string; text: string; published: string }
 
-const MAX_LINKS = 10;
-
-/** Links from a pasted block: one per line, commas or spaces also fine, duplicates dropped. */
-function parseLinks(raw: string): string[] {
-  const seen = new Set<string>();
-  for (const part of raw.split(/[\s,]+/)) {
-    const link = part.trim();
-    if (/^https?:\/\/\S+$/i.test(link)) seen.add(link);
-  }
-  return [...seen];
-}

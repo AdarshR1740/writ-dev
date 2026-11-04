@@ -5,7 +5,10 @@ import { errorMessage, supabase } from "../lib/supabase";
 import { useCompany, useSession } from "../lib/session";
 import { must, useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
-import { ErrorText, Loading, Lede } from "../components/ui";
+import { ErrorText, Loading, Lede, PromptHelper } from "../components/ui";
+import { StepNav } from "../components/StepNav";
+import { VOICE_MEMORY_PROMPT } from "../lib/sections";
+import { parseRules } from "../lib/rules";
 
 export interface MemoryRule {
   id: string;
@@ -23,6 +26,7 @@ export function VoiceMemoryPage() {
     [company.id],
   );
   const [adding, setAdding] = useState("");
+  const [pasted, setPasted] = useState("");
   const [editing, setEditing] = useState<{ id: string; rule: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -44,6 +48,33 @@ export function VoiceMemoryPage() {
         <Lede more={<>Learned from your edits to AI drafts, the final versions you paste back, and what you say in the conversations. Only drafting reads it.</>}>What the tool has learned about how you write. Every rule is yours to change.</Lede>
       </div>
       <ErrorText>{error ?? actionError}</ErrorText>
+      <PromptHelper title="Get rules from your AI tool" prompt={VOICE_MEMORY_PROMPT}>
+        <p className="small muted">
+          If you already write with ChatGPT, Claude or Gemini, it has seen your corrections. Paste this prompt into that tool, then paste its list of rules in the box below.
+        </p>
+      </PromptHelper>
+      {data && (
+        <div className="card stack" style={{ padding: 16 }}>
+          <h3>Paste a list of rules</h3>
+          <p className="small muted">One rule per line. Bullets and numbers are removed, and rules you already have are skipped. You can edit or delete any of them afterwards.</p>
+          <textarea rows={5} value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder={"Open with the claim, not the context\nWrite numbers as digits"} aria-label="Rules to add" />
+          {(() => {
+            const rules = parseRules(pasted, data.map((m) => m.rule));
+            return (
+              <div className="row">
+                <button type="button" className="btn btn-primary" disabled={rules.length === 0} onClick={() => act(async () => {
+                  must(await supabase.from("voice_memory").insert(
+                    rules.map((rule) => ({ company_id: company.id, rule, origin: "manual", created_by: session!.user.id })),
+                  ).select("id"));
+                  setPasted("");
+                })}>
+                  {rules.length ? `Add ${rules.length} rule${rules.length === 1 ? "" : "s"}` : "Add rules"}
+                </button>
+              </div>
+            );
+          })()}
+        </div>
+      )}
       {!data ? <Loading /> : (
         <>
           {data.length === 0 && (
@@ -89,6 +120,7 @@ export function VoiceMemoryPage() {
           </form>
         </>
       )}
+      <StepNav />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { DOC_SECTIONS } from "../lib/sections";
 import { useSetupStatus } from "../components/Layout";
 import { DocumentWorkbench } from "../components/DocumentWorkbench";
 import { Loading, PromptHelper } from "../components/ui";
+import { StepNav } from "../components/StepNav";
 
 export function DocSectionPage() {
   const { section } = useParams();
@@ -33,9 +34,10 @@ export function DocSectionPage() {
         documentId={doc.id}
         companyId={company.id}
         methods={s.methods}
-        placeholder={s.emptyHint}
+        copy={s.material}
         onChanged={refresh}
       />
+      <StepNav />
     </div>
   );
 }

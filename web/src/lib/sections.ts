@@ -5,6 +5,16 @@ import type { DocKind } from "./types";
 
 export type InputMethod = "paste" | "upload" | "url";
 
+/** What the add-material box says for one section, so it never looks the same everywhere. */
+export interface MaterialCopy {
+  title: string;
+  intro: string;
+  nameExample: string;
+  textPlaceholder: string;
+  uploadHelp: string;
+  linksHelp: string;
+}
+
 export interface DocSection {
   kind: DocKind;
   path: string;
@@ -14,6 +24,7 @@ export interface DocSection {
   methods: InputMethod[];
   prompt: string;
   emptyHint: string;
+  material: MaterialCopy;
 }
 
 const OUTPUT_RULES = `OUTPUT RULES
@@ -31,6 +42,14 @@ export const DOC_SECTIONS: DocSection[] = [
     required: true,
     methods: ["paste", "upload"],
     emptyHint: "Paste your ICP doc, persona notes or sales playbook, or upload the file.",
+    material: {
+      title: "Add what you know about your customers",
+      intro: "An ICP doc, persona notes, a sales playbook or call-prep notes. Add as many as you have; AI merges them into one profile.",
+      nameExample: "Sales playbook 2026",
+      textPlaceholder: "Paste your ICP doc, persona notes or sales playbook",
+      uploadHelp: "ICP docs, persona decks, playbooks.",
+      linksHelp: "Public pages about your customers, such as a persona page or a case-study index.",
+    },
     prompt: `TASK
 Using the documents and notes I've shared with you, write our ideal customer profile.
 
@@ -56,6 +75,14 @@ ${OUTPUT_RULES}`,
     required: true,
     methods: ["paste", "upload"],
     emptyHint: "Paste your positioning or messaging doc, or upload it.",
+    material: {
+      title: "Add your positioning and messaging",
+      intro: "A positioning doc, messaging framework, competitor comparison or the text of a pitch deck.",
+      nameExample: "Messaging framework",
+      textPlaceholder: "Paste your positioning or messaging doc",
+      uploadHelp: "Positioning docs, messaging frameworks, pitch-deck text.",
+      linksHelp: "Your own pages that state your positioning, such as your home or about page.",
+    },
     prompt: `TASK
 Using the documents and notes I've shared with you, write our positioning.
 
@@ -80,6 +107,14 @@ ${OUTPUT_RULES}`,
     required: false,
     methods: ["paste", "upload"],
     emptyHint: "Optional: paste content pillars, goals or a topics-to-avoid list.",
+    material: {
+      title: "Add your content strategy notes",
+      intro: "Content pillars, goals, and any list of topics to avoid. Optional, and short is fine.",
+      nameExample: "Content pillars",
+      textPlaceholder: "Paste content pillars, goals or a topics-to-avoid list",
+      uploadHelp: "Strategy docs, editorial calendars' notes.",
+      linksHelp: "A public content strategy or editorial-guidelines page.",
+    },
     prompt: `TASK
 From what I've shared, summarise how we decide what to write about.
 
@@ -101,6 +136,14 @@ ${OUTPUT_RULES}`,
     required: true,
     methods: ["paste", "upload"],
     emptyHint: "Paste your style guide or brand voice doc, or the instructions from your Claude Project, skill or Custom GPT.",
+    material: {
+      title: "Add your style guide and voice rules",
+      intro: "A style guide, brand voice doc, or the instructions from your Claude Project, skill or Custom GPT. Leave out format habits like length; those go on each format.",
+      nameExample: "Brand voice guide",
+      textPlaceholder: "Paste your style guide, or the instructions you give your AI tool",
+      uploadHelp: "Style guides and brand voice docs.",
+      linksHelp: "A public style or brand-voice page.",
+    },
     prompt: `TASK
 Using our style guide, brand docs and any writing instructions I've shared (including instructions from
 Claude Projects, skills or Custom GPTs), write our core writing voice.
@@ -208,3 +251,32 @@ FIELDS (every item has exactly these fields)
 
 OUTPUT FORMAT
 Return only a JSON array, with no other text.`;
+
+/** What the add-material box says on a format's page. */
+export const formatMaterial = (formatName: string): MaterialCopy => ({
+  title: `Add your best ${formatName} examples`,
+  intro: "Two to five pieces you consider perfect. Paste their links in bulk, or paste the text. AI works out what they have in common, and you review every line.",
+  nameExample: `Example ${formatName}, March launch`,
+  textPlaceholder: "Paste one complete example piece",
+  uploadHelp: "Finished pieces saved as files.",
+  linksHelp: "Paste the most relevant links, one per line. LinkedIn, X and similar sites block fetching: paste those posts as text instead.",
+});
+
+export const VOICE_MEMORY_PROMPT = `TASK
+From our past conversations and any writing of mine you can see, list the writing preferences I have shown
+or told you about, as short rules I can reuse on any piece.
+
+STEPS
+1. Look for things I corrected, cut, rewrote or asked you to avoid or always do.
+2. Turn each pattern into one rule.
+3. Keep only rules that are specific, behavioural and reusable across topics.
+4. Skip anything about a single topic, and anything vague such as "be engaging".
+
+GOOD RULES
+- Open with the claim, not the context.
+- Never use the word "leverage".
+- Write numbers as digits.
+
+OUTPUT FORMAT
+A plain list with one rule per line and nothing else: no headings, no introduction, no numbering,
+no explanations. At most 20 rules, strongest first. If you can't find any, say so in one line.`;
