@@ -998,3 +998,20 @@ details.structure > summary { cursor: pointer; color: var(--muted); }
 ol.structure-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
 ol.structure-list li { display: grid; grid-template-columns: 11rem 1fr auto; gap: 6px; align-items: center; }
 @media (max-width: 720px) { ol.structure-list li { grid-template-columns: 1fr; } }
+
+/* Write: one search box, an In progress / Done switch, and the rest behind "Filters" */
+.list-bar { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; }
+.list-bar input[type="search"] { flex: 1 1 260px; min-width: 0; width: auto; border: 1px solid var(--field-border); border-radius: var(--radius); background: var(--surface); color: var(--ink); font: 14.5px/1.5 var(--font-ui); padding: 8px 10px; }
+.seg { display: inline-flex; border: 1px solid var(--field-border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: none; padding: 8px 14px; font: 600 14px/1.4 var(--font-ui); color: var(--muted); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--field-border); }
+.seg button.on { background: var(--ink); color: var(--surface); }
+.seg button.on .faint { color: inherit; opacity: 0.75; }
+.more-filters > summary { cursor: pointer; color: var(--muted); width: max-content; }
+.next-step { color: var(--pencil); font-weight: 600; }
+.format-group { border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.format-group > summary { display: flex; gap: 10px; align-items: baseline; padding: 12px 14px; cursor: pointer; font-weight: 600; }
+.format-group > summary .faint { font-weight: 500; font-size: 13px; margin-left: auto; }
+.format-group[open] > summary { border-bottom: 1px solid var(--rule); }
+.format-group .checklist { border: 0; border-radius: 0; }
+.clip { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }

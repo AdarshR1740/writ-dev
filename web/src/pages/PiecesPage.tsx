@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { BudgetAlert } from "../components/Budget";
 import { EmptyState } from "../components/EmptyState";
 import { Link, useNavigate } from "react-router-dom";
@@ -10,12 +10,10 @@ import { STAGES, type Format, type Piece } from "../lib/types";
 import { LONG_FORM, normalise, presetFor, stagesFor } from "../lib/recipes";
 import { FORMAT_TEMPLATES } from "../lib/sections";
 import { useSetupStatus } from "../components/Layout";
-import { ErrorText, Loading, Modal, Lede, CleanTextarea } from "../components/ui";
+import { ErrorText, Loading, Modal, CleanTextarea } from "../components/ui";
 import { GettingStarted } from "../components/GettingStarted";
 
 type Row = Pick<Piece, "id" | "code" | "version" | "title" | "topic" | "primary_keyword" | "stage" | "format_id" | "revised_by" | "review_due_at" | "updated_at">;
-type StageFilter = "" | "active" | Piece["stage"] | "due";
-
 const stageLabel = (s: Piece["stage"]) => (s === "done" ? "Done" : STAGES.find((x) => x.key === s)?.label ?? s);
 
 export function PiecesPage() {
@@ -36,12 +34,14 @@ export function PiecesPage() {
     <div className="page page-narrow">
       <div className="page-head">
         <span className="eyebrow">{company.name}</span>
-        <h1>Write</h1>
-        <Lede more={<>Each piece moves through the steps its format's workflow switches on: reader contract, reviewed research, outline, writing and sign-off.</>}>Every piece you're writing or have written. Nothing moves on until a person approves it.</Lede>
+        <div className="row" style={{ alignItems: "center" }}>
+          <h1 style={{ flex: 1 }}>Write</h1>
+          {data && data.pieces.length > 0 && <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>Start a piece</button>}
+        </div>
+        <p className="muted">Your pieces, from first idea to sign-off. Open one to carry on where it stopped.</p>
       </div>
       <BudgetAlert companyId={company.id} />
       {data && <GettingStarted status={status ?? null} pieceCount={data.pieces.length} onStart={() => setCreating(true)} />}
-      {data && data.pieces.length > 0 && <div><button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>Start a piece</button></div>}
       <ErrorText>{error}</ErrorText>
       {!data ? <Loading /> : data.pieces.length === 0 ? (
         <EmptyState icon="page" title="Nothing written yet"
@@ -50,7 +50,6 @@ export function PiecesPage() {
         </EmptyState>
       ) : (
         <>
-          <ContinueWriting pieces={data.pieces} formats={data.formats} />
           <PieceList pieces={data.pieces} formats={data.formats} />
         </>
       )}
@@ -59,14 +58,21 @@ export function PiecesPage() {
   );
 }
 
-/** All pieces, grouped by format, with search (titles, IDs, keywords and the text itself) and filters. */
+const NEXT_STEP: Record<Piece["stage"], string> = {
+  contract: "Agree the reader contract",
+  research: "Review the research",
+  outline: "Confirm the outline",
+  writing: "Keep writing",
+  done: "",
+};
+
+/** Pieces in progress, or finished. One search box; format and older versions sit behind "Filters". */
 function PieceList({ pieces, formats }: { pieces: Row[]; formats: { id: string; name: string }[] }) {
   const company = useCompany();
   const [query, setQuery] = useState("");
+  const [tab, setTab] = useState<"active" | "done" | null>(null);
   const [format, setFormat] = useState("");
-  const [stage, setStage] = useState<StageFilter>("");
   const [older, setOlder] = useState(false);
-  const [grouped, setGrouped] = useState(true);
   // Pieces whose written text matches the search (checked on the server).
   const [textHits, setTextHits] = useState<Set<string>>(new Set());
   const q = query.trim().toLowerCase();
@@ -76,71 +82,90 @@ function PieceList({ pieces, formats }: { pieces: Row[]; formats: { id: string; 
     let live = true;
     const t = setTimeout(async () => {
       const { data } = await supabase.from("piece_sections").select("piece_id")
-        .eq("company_id", company.id).ilike("content", `%${q.replace(/[\\%_]/g, "\\$&")}%`).limit(500);
+        .eq("company_id", company.id).ilike("content", `%${q.replace(/[\%_]/g, "\$&")}%`).limit(500);
       if (live) setTextHits(new Set((data ?? []).map((r: { piece_id: string }) => r.piece_id)));
     }, 300);
     return () => { live = false; clearTimeout(t); };
   }, [q, company.id]);
 
   const today = new Date();
-  const shown = useMemo(() => pieces.filter((p) => {
-    if (!older && p.revised_by) return false;
-    if (format && (format === "none" ? p.format_id !== null : p.format_id !== format)) return false;
-    if (stage === "active" && p.stage === "done") return false;
-    if (stage === "due" && !(p.stage === "done" && !p.revised_by && p.review_due_at && new Date(p.review_due_at) <= today)) return false;
-    if (stage && stage !== "active" && stage !== "due" && p.stage !== stage) return false;
-    if (!q) return true;
-    return `${p.code} ${p.title} ${p.primary_keyword} ${p.topic}`.toLowerCase().includes(q) || textHits.has(p.id);
-  }), [pieces, older, format, stage, q, textHits]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  const base = pieces.filter((p) => (older || !p.revised_by) && (!format || (format === "none" ? p.format_id === null : p.format_id === format)));
+  const activeCount = base.filter((p) => p.stage !== "done").length;
+  const doneCount = base.length - activeCount;
+  // Open on "In progress", or on "Done" when nothing is in progress.
+  const view = tab ?? (activeCount > 0 ? "active" : "done");
+  const shown = q
+    ? base.filter((p) => `${p.code} ${p.title} ${p.primary_keyword} ${p.topic}`.toLowerCase().includes(q) || textHits.has(p.id))
+    : base.filter((p) => (view === "active") === (p.stage !== "done"));
   const formatName = (id: string | null) => (id ? formats.find((f) => f.id === id)?.name ?? "Format" : "No format");
-  const groups = grouped
-    ? [...formats.map((f) => f.id), null].map((id) => ({ id, name: formatName(id), items: shown.filter((p) => p.format_id === id) })).filter((g) => g.items.length)
-    : [{ id: "all", name: "", items: shown }];
-  const filtered = Boolean(q || format || stage || older);
+  const groups = [...formats.map((f) => f.id), null]
+    .map((id) => ({ id, name: formatName(id), items: shown.filter((p) => p.format_id === id) })).filter((g) => g.items.length);
+  const filters = (format ? 1 : 0) + (older ? 1 : 0);
+  const reviewDue = (p: Row) => p.stage === "done" && !p.revised_by && p.review_due_at && new Date(p.review_due_at) <= today;
 
   return (
     <div className="stack">
-      <div className="filters">
-        <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search titles, IDs, keywords and text" aria-label="Search pieces" />
-        <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="Format">
-          <option value="">All formats</option>
-          {formats.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-          <option value="none">No format</option>
-        </select>
-        <select value={stage} onChange={(e) => setStage(e.target.value as StageFilter)} aria-label="Stage">
-          <option value="">Any stage</option>
-          <option value="active">In progress</option>
-          {STAGES.map((s) => <option key={s.key} value={s.key}>{stageLabel(s.key)}</option>)}
-          <option value="due">Review due</option>
-        </select>
-        <label className="check-label small"><input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} /> Group by format</label>
-        <label className="check-label small"><input type="checkbox" checked={older} onChange={(e) => setOlder(e.target.checked)} /> Older versions</label>
-      </div>
-      <p className="small muted" aria-live="polite">
-        {shown.length} of {pieces.filter((p) => older || !p.revised_by).length} pieces
-        {filtered && <> · <button type="button" className="link-btn" onClick={() => { setQuery(""); setFormat(""); setStage(""); setOlder(false); }}>Clear filters</button></>}
-      </p>
-      {shown.length === 0 ? <EmptyState icon="page" title="Nothing matches"><p>Try fewer words, or clear the filters.</p></EmptyState> : groups.map((g) => (
-        <section key={g.id ?? "none"} className="stack" style={{ gap: 8 }} aria-label={g.name || "Pieces"}>
-          {grouped && <h2 className="group-head">{g.name} <span className="faint">{g.items.length}</span></h2>}
-          <div className="checklist">
-            {g.items.map((p) => (
-              <Link key={p.id} to={`/pieces/${p.id}`} className="check-item" style={{ gridTemplateColumns: "1fr auto" }}>
-                <span className="stack" style={{ gap: 2 }}>
-                  <strong><span className="id faint">{p.code} v{p.version}</span> {p.title}</strong>
-                  <span className="small muted">
-                    {!grouped && <>{formatName(p.format_id)} · </>}
-                    {p.primary_keyword && <>{p.primary_keyword} · </>}updated {formatDate(p.updated_at)}
-                    {q.length >= 3 && textHits.has(p.id) && <> · <span className="flag-text">matches in the text</span></>}
-                  </span>
-                </span>
-                <span className={`tag ${p.revised_by ? "" : p.stage === "done" ? "ok" : "pencil"}`}>{p.revised_by ? "Revised" : stageLabel(p.stage)}</span>
-              </Link>
-            ))}
+      <div className="list-bar">
+        <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your pieces" aria-label="Search pieces" />
+        {!q && (
+          <div className="seg" role="tablist" aria-label="Show">
+            <button type="button" role="tab" aria-selected={view === "active"} className={view === "active" ? "on" : ""} onClick={() => setTab("active")}>In progress <span className="faint">{activeCount}</span></button>
+            <button type="button" role="tab" aria-selected={view === "done"} className={view === "done" ? "on" : ""} onClick={() => setTab("done")}>Done <span className="faint">{doneCount}</span></button>
           </div>
-        </section>
-      ))}
+        )}
+      </div>
+      <details className="more-filters" open={filters > 0}>
+        <summary className="small">Filters{filters > 0 ? ` (${filters})` : ""}</summary>
+        <div className="row" style={{ flexWrap: "wrap", gap: "8px 16px", paddingTop: 8 }}>
+          <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="Format">
+            <option value="">All formats</option>
+            {formats.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            <option value="none">No format</option>
+          </select>
+          <label className="check-label small"><input type="checkbox" checked={older} onChange={(e) => setOlder(e.target.checked)} /> Include older versions</label>
+          {filters > 0 && <button type="button" className="link-btn small" onClick={() => { setFormat(""); setOlder(false); }}>Clear filters</button>}
+        </div>
+      </details>
+      {q && <p className="small muted" aria-live="polite">{shown.length} {shown.length === 1 ? "piece matches" : "pieces match"} “{query.trim()}” across In progress and Done.</p>}
+      {shown.length === 0 ? (
+        <EmptyState icon="page" title={q ? "Nothing matches" : view === "active" ? "Nothing in progress" : "Nothing finished yet"}>
+          <p>{q ? "Try fewer words, or clear the filters." : view === "active" ? "Start a piece, or open the Done tab to revisit finished work." : "Pieces appear here once they are signed off."}</p>
+        </EmptyState>
+      ) : (
+        <div className="stack" style={{ gap: 10 }}>
+          {groups.map((g) => (
+            <details key={g.id ?? "none"} className="format-group" open={q.length > 0 || groups.length === 1}>
+              <summary>
+                <span className="group-name">{g.name}</span>
+                <span className="faint">{g.items.length} {g.items.length === 1 ? "piece" : "pieces"}</span>
+              </summary>
+              <div className="checklist">
+                {g.items.map((p) => {
+                  // The keyword where the format uses one; otherwise the title. The title or topic (which can be a long paragraph) is not shown in the row; it appears as a tooltip.
+                  const keyword = p.primary_keyword.trim();
+                  const headline = keyword || p.title;
+                  const sub = keyword ? p.title : p.topic.trim();
+                  return (
+                    <Link key={p.id} to={`/pieces/${p.id}`} className="check-item" style={{ gridTemplateColumns: "1fr auto" }} title={[p.code, sub && sub !== headline ? sub : ""].filter(Boolean).join(" · ")}>
+                      <span className="stack" style={{ gap: 2 }}>
+                        <strong>{headline}</strong>
+                        <span className="small muted">
+                          {p.version > 1 && <>Version {p.version} · </>}Updated {formatDate(p.updated_at)}
+                          {q.length >= 3 && textHits.has(p.id) && <> · <span className="flag-text">matches in the text</span></>}
+                        </span>
+                        {p.stage !== "done" && <span className="small next-step">Next: {NEXT_STEP[p.stage].toLowerCase()} →</span>}
+                      </span>
+                      <span className={`tag ${p.revised_by ? "" : p.stage === "done" ? (reviewDue(p) ? "flag" : "ok") : "pencil"}`}>
+                        {p.revised_by ? "Revised" : reviewDue(p) ? "Review due" : stageLabel(p.stage)}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -290,35 +315,5 @@ function NewPiece({ onClose }: { onClose: () => void }) {
         </div>
       </form>
     </Modal>
-  );
-}
-
-
-const NEXT_STEP: Record<Piece["stage"], string> = {
-  contract: "Agree the reader contract",
-  research: "Review the research",
-  outline: "Confirm the outline",
-  writing: "Keep writing",
-  done: "",
-};
-
-/** The three most recent pieces still in progress, with what each needs next. */
-function ContinueWriting({ pieces, formats }: { pieces: Row[]; formats: { id: string; name: string }[] }) {
-  const active = pieces.filter((p) => p.stage !== "done" && !p.revised_by).slice(0, 3);
-  if (active.length === 0) return null;
-  return (
-    <section className="stack" style={{ gap: 10 }} aria-label="Pick up where you left off">
-      <h2 className="group-head" style={{ marginTop: 0 }}>Pick up where you left off</h2>
-      <div className="continue-grid">
-        {active.map((p) => (
-          <Link key={p.id} to={`/pieces/${p.id}`} className="continue-card">
-            <span className="small muted"><span className="id">{p.code}</span> · {formats.find((f) => f.id === p.format_id)?.name ?? "No format"}</span>
-            <strong>{p.title}</strong>
-            <span className="continue-next">{NEXT_STEP[p.stage]} →</span>
-            <span className="small faint">Updated {formatDate(p.updated_at)}</span>
-          </Link>
-        ))}
-      </div>
-    </section>
   );
 }
