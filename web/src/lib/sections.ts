@@ -291,6 +291,55 @@ RULES
 OUTPUT FORMAT
 Return only the edited text, with no introduction, no notes and no list of changes.`;
 
+/** For the writing stage: restyle a finished text to sound like one leader. Run in the writer's own AI tool. */
+export function writeLikePrompt(voice: { name: string; role: string; profile: string }): string {
+  const who = voice.role.trim() ? `${voice.name} (${voice.role.trim()})` : voice.name;
+  return `TASK
+Edit the text below so it sounds like ${who} wrote it, without changing what it says.
+
+HOW ${voice.name.toUpperCase()} WRITES
+${voice.profile.trim()}
+
+STEPS
+1. Read the whole text first.
+2. Read the description above of how ${voice.name} writes.
+3. Rework the wording, sentence length, rhythm and openings so they match that description.
+4. Check that every fact, number, name, date and quote is unchanged.
+
+RULES
+- Keep the meaning, argument, order and facts exactly as they are.
+- Do not add facts, examples, numbers, names or opinions. Do not remove any.
+- Do not copy phrases from the description word for word unless they fit naturally.
+- Keep the same length, give or take 15%.
+- Keep headings and any [1], [2] style references where they are.
+- If a sentence already sounds like ${voice.name}, leave it alone.
+
+OUTPUT FORMAT
+Return only the edited text, with no introduction, no notes and no list of changes.`;
+}
+
+/** For the Leader voices page: build a voice description from a person's real writing, in the editor's own AI tool. */
+export const LEADER_VOICE_PROMPT = `TASK
+Describe how the person whose writing I paste below writes, so that another writer could imitate them.
+
+STEPS
+1. Read all the samples first.
+2. Note what is consistent across them: how they open, how long their sentences and paragraphs are, which words they favour or avoid, how formal they are, how they use numbers, examples and humour, and how they close.
+3. Write the description as a short list of concrete rules.
+
+RULES
+- Use 8 to 15 rules. Each is one line, written as an instruction (for example: "Opens with the claim, never with context").
+- Only describe patterns you can see in at least two samples.
+- Quote a short example phrase from the samples after a rule when it helps, in quotation marks.
+- Do not describe the topics they write about. Describe how they write.
+- Do not flatter. No words like "engaging" or "compelling".
+
+OUTPUT FORMAT
+Return only the list of rules, one per line, starting each with a dash. No introduction.
+
+THE SAMPLES
+(paste 3 to 5 pieces of their real writing here)`;
+
 export const VOICE_MEMORY_PROMPT =`TASK
 From our past conversations and any writing of mine you can see, list the writing preferences I have shown
 or told you about, as short rules I can reuse on any piece.

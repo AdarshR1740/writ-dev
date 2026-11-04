@@ -5,6 +5,7 @@ import { DOC_SECTIONS } from "../lib/sections";
 const STEPS: { to: string; label: string }[] = [
   ...DOC_SECTIONS.map((s) => ({ to: `/setup/${s.path}`, label: s.title })),
   { to: "/voice-memory", label: "Voice memory" },
+  { to: "/voices", label: "Leader voices" },
   { to: "/formats", label: "Formats" },
   { to: "/insights", label: "Insights" },
   { to: "/data", label: "Proprietary data" },

@@ -11,7 +11,7 @@ import {
   type Source,
   type SourceType,
 } from "../lib/types";
-import { AiAction, ErrorText, Loading, Tabs } from "./ui";
+import { AiAction, ErrorText, Loading, Tabs, CleanTextarea } from "./ui";
 import { normalise } from "../lib/recipes";
 import { cardDetail } from "../lib/cards";
 import { MAX_LINKS, parseLinks } from "../lib/links";
@@ -341,7 +341,7 @@ function ItemView({ item, focused, locked, onFocus, onReview, onLibrary }: {
         <p className="claim">{item.statement}</p>
       ) : (
         <div className="stack" style={{ gap: 8 }}>
-          <textarea rows={3} value={editing} onChange={(e) => setEditing(e.target.value)} aria-label="Statement" autoFocus />
+          <CleanTextarea rows={3} value={editing} onChange={(e) => setEditing(e.target.value)} aria-label="Statement" autoFocus />
           <div className="row">
             <button type="button" className="btn btn-small btn-primary" onClick={() => { onReview("approved", editing); setEditing(null); }}>Save and approve</button>
             <button type="button" className="btn btn-quiet btn-small" onClick={() => setEditing(null)}>Cancel</button>
@@ -426,7 +426,7 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
         <>
           {fetched.length === 0 && (
             <>
-              <textarea
+              <CleanTextarea
                 rows={4}
                 value={urls}
                 onChange={(e) => setUrls(e.target.value)}
@@ -459,7 +459,7 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
       ) : (
         <>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title or URL" aria-label="Source title" />
-          <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste the article or report text" aria-label="Source text" style={{ minHeight: 100 }} />
+          <CleanTextarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste the article or report text" aria-label="Source text" style={{ minHeight: 100 }} />
         </>
       )}
       <ErrorText>{error}</ErrorText>

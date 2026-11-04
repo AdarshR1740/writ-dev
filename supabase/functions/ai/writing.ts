@@ -364,11 +364,17 @@ async function prepareGrammar(userId: string, body: Record<string, unknown>): Pr
   const text = String(body.text ?? section.content).trim();
   if (!text) throw new UserError("Write something first.");
   return task<{ suggestions: { original: string; replacement: string; reason: string }[] }>("grammar_check", "extract",
-    piece, userId, (await promptSet(piece.company_id))("grammar", GRAMMAR_SYSTEM), `<text>\n${text}\n</text>`, grammarSchema, 800, async (data, cost, model) => ({
-      suggestions: data.suggestions.filter((s) => s.original && s.original !== s.replacement && text.includes(s.original)),
-      cost_usd: cost,
-      model,
-    }));
+    piece, userId, (await promptSet(piece.company_id))("grammar", GRAMMAR_SYSTEM), `<text>\n${text}\n</text>`, grammarSchema, 800, async (data, cost, model) => {
+      const suggestions = data.suggestions.filter((s) => s.original && s.original !== s.replacement && text.includes(s.original));
+      // Remember which revision of the text was checked, so the tick goes away on the next edit.
+      // A check of text that wasn't saved yet can't be tied to a revision, so it isn't recorded.
+      if (text === section.content.trim()) {
+        await admin.from("piece_sections").update({
+          grammar_check: { checked_at: new Date().toISOString(), rev: section.content_rev, found: suggestions.length },
+        }).eq("id", section.id);
+      }
+      return { suggestions, cost_usd: cost, model };
+    });
 }
 
 export const FACT_SYSTEM = `ROLE
@@ -414,6 +420,7 @@ async function prepareFacts(userId: string, body: Record<string, unknown>): Prom
     userId, (await promptSet(piece.company_id))("fact", FACT_SYSTEM), user, factSchema, 1000, async (data, cost, model) => {
       const result = {
         checked_at: new Date().toISOString(),
+        rev: section.content_rev,
         flags: data.flags.map((f) => ({ ...f, item_id: items.find((i) => i.n === f.item)?.id ?? null })),
       };
       await admin.from("piece_sections").update({ fact_check: result }).eq("id", section.id);
@@ -484,6 +491,7 @@ ${text}
     piece, userId, (await promptSet(piece.company_id))("contract_check", CONTRACT_CHECK_SYSTEM), user, contractCheckSchema, 1200, async (data, cost, model) => {
       const result = {
         checked_at: new Date().toISOString(),
+        rev: section?.content_rev ?? null,
         results: owed.map((e, i) => {
           const r = data.results.find((x) => x.expectation === i + 1);
           return { expectation_id: e.id, text: e.text, status: r?.status ?? "missing", evidence: r?.evidence ?? "", gap: r?.gap ?? "Not assessed." };

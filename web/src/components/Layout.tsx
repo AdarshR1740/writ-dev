@@ -68,7 +68,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const formatsFilled = (status?.formats ?? []).some((f) => f.filled);
   const formatsPending = (status?.formats ?? []).some((f) => f.pending);
   // The house file folds into one entry; its parts show only while you're in it.
-  const inHouseFile = /^\/(house-file|setup|formats|insights|data|voice-memory)(\/|$)/.test(location.pathname);
+  const inHouseFile = /^\/(house-file|setup|formats|insights|data|voice-memory|voices)(\/|$)/.test(location.pathname);
   const required = [
     ...DOC_SECTIONS.filter((d) => d.required).map((d) => Boolean(status?.docs[d.kind]?.filled)),
     formatsFilled,
@@ -135,6 +135,7 @@ export function Layout({ children }: { children: ReactNode }) {
                   );
                 })}
                 <NavLink to="/voice-memory" className="nav-link sub" title="Rules learned from your finished pieces, part of the core voice">Voice memory</NavLink>
+                <NavLink to="/voices" className="nav-link sub" title="How particular leaders write, so a finished piece can be edited to sound like them">Leader voices</NavLink>
                 <NavLink to="/formats" className="nav-link">
                   <Dot filled={formatsFilled} pending={formatsPending} />
                   Formats

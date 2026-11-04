@@ -69,6 +69,7 @@ export interface SectionRow {
   brief: { text: string; refs: string[] }[] | null;
   content: string;
   ai_draft: string | null;
+  content_rev: number;
 }
 
 export async function loadSection(sectionId: string): Promise<SectionRow> {

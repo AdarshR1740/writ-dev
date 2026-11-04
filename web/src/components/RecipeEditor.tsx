@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { BASES, presetFor, validate, type Base, type Recipe } from "../lib/recipes";
-import { ErrorText } from "./ui";
+import { ErrorText, CleanTextarea } from "./ui";
 
 type Shown = { show?: (r: Recipe) => boolean; sub?: boolean };
 type Control = Shown & (
@@ -208,7 +208,7 @@ export function RecipeEditor({ initial, editable, onSave }: {
                   {c.kind === "list" && recipe.outline.mode === "fixed" && (
                     <label className="field">
                       <span>{c.label} (one per line)</span>
-                      <textarea rows={4} value={(value as string[]).join("\n")} style={{ minHeight: 90 }}
+                      <CleanTextarea rows={4} value={(value as string[]).join("\n")} style={{ minHeight: 90 }}
                         onChange={(e) => setRecipe(set(recipe, c.path, e.target.value.split("\n")))} />
                     </label>
                   )}

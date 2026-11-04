@@ -3,7 +3,7 @@ import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import type { Analysis, Contract, Piece, Section, ThreadMessage } from "../lib/types";
 import { CardForm, emptyCard } from "./CardForm";
-import { AiAction, ErrorText, Loading, Modal } from "./ui";
+import { AiAction, ErrorText, Loading, Modal, CleanTextarea } from "./ui";
 import { SeoGeoPanel } from "./SeoGeoPanel";
 import { normalise } from "../lib/recipes";
 
@@ -181,7 +181,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                 </div>
               ))}
             </div>
-            <textarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="e.g. Put the cost comparison before the deep dives" aria-label="Message" style={{ minHeight: 70 }} />
+            <CleanTextarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="e.g. Put the cost comparison before the deep dives" aria-label="Message" style={{ minHeight: 70 }} />
             <AiAction<{ message: ThreadMessage }>
               label={messages.length ? "Send" : "Suggest an outline"}
               disabled={dirty}

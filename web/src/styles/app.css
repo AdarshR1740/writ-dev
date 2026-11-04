@@ -985,3 +985,9 @@ ol.how-steps li.now { color: var(--ink); }
 ol.how-steps li.now::before { background: var(--pencil); border-color: var(--pencil); color: #fff; }
 ol.how-steps li.done::before { content: "✓"; background: var(--ok-soft, #ddf3e6); border-color: transparent; color: var(--ok, #145c38); }
 button.card.pick.picked { border-color: var(--pencil); box-shadow: inset 0 0 0 1px var(--pencil); }
+
+/* A check's state against the text as it is now: a tick only while the text hasn't changed since. */
+.check-state { font-size: 13px; color: var(--faint, #6b6b6b); margin-left: auto; }
+.check-state.current { color: var(--ins-ink); font-weight: 600; }
+.check-state.stale { color: var(--flag); }
+.notice.ok-notice { background: var(--ins-bg); color: var(--ins-ink); border-color: transparent; align-items: center; }

@@ -3,7 +3,7 @@ import { callFunction, errorMessage, supabase } from "../lib/supabase";
 import { useCompany, useSession } from "../lib/session";
 import { useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
-import { DOC_SECTIONS, DATA_PROMPT, FORMAT_PROMPT, HUMANIZER_PROMPT, INSIGHT_PROMPT, VOICE_MEMORY_PROMPT } from "../lib/sections";
+import { DOC_SECTIONS, DATA_PROMPT, FORMAT_PROMPT, HUMANIZER_PROMPT, INSIGHT_PROMPT, LEADER_VOICE_PROMPT, VOICE_MEMORY_PROMPT, writeLikePrompt } from "../lib/sections";
 import { CopyButton, ErrorText, Lede, Loading } from "../components/ui";
 
 interface Unit {
@@ -65,6 +65,24 @@ const OWN_TOOL: Entry[] = [
     tier: "write",
     receives: ["The section text you copy along with it"],
     units: [{ label: "Prompt", text: HUMANIZER_PROMPT }],
+  },
+  {
+    id: "own-write-like",
+    group: "Run in your own AI tool",
+    title: "Write like a leader",
+    when: "Shown on the Writing step and at sign-off. The leader you pick fills in the name and voice description; the example below uses placeholders.",
+    tier: "write",
+    receives: ["The text you copy along with it", "The voice description an editor wrote for that leader"],
+    units: [{ label: "Prompt", text: writeLikePrompt({ name: "Leader name", role: "Role", profile: "(the leader's voice description)" }) }],
+  },
+  {
+    id: "own-leader-voice",
+    group: "Run in your own AI tool",
+    title: "Leader voice description",
+    when: "Shown when an editor adds a voice on the Leader voices page. Run it on samples of the person's writing and paste the rules back.",
+    tier: "extract",
+    receives: ["3 to 5 samples of the person's writing"],
+    units: [{ label: "Prompt", text: LEADER_VOICE_PROMPT }],
   },
   {
     id: "own-voice-memory",

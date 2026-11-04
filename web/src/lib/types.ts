@@ -289,8 +289,11 @@ export interface Section {
   content: string;
   ai_draft: string | null;
   written_by: "writer" | "ai_then_writer" | null;
-  contract_check: { checked_at: string; results: CheckResult[] } | null;
-  fact_check: { checked_at: string; flags: FactFlag[] } | null;
+  contract_check: { checked_at: string; rev?: number | null; results: CheckResult[] } | null;
+  fact_check: { checked_at: string; rev?: number; flags: FactFlag[] } | null;
+  grammar_check: { checked_at: string; rev: number; found: number } | null;
+  /** Goes up by one each time the text changes; a check is current only while its rev matches. */
+  content_rev: number;
   updated_at: string;
 }
 
@@ -327,4 +330,12 @@ export interface RepurposePlan {
   proposal: { entries: PlanEntry[]; not_translated: string[]; gaps: string[] } | null;
   status: "draft" | "created";
   created_pieces: string[];
+}
+
+export interface LeaderVoice {
+  id: string;
+  name: string;
+  role: string;
+  profile: string;
+  updated_at: string;
 }

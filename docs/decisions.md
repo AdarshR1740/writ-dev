@@ -722,3 +722,23 @@ Instagram caption, Instagram carousel, LinkedIn carousel, X thread, video script
   question (an exception to §14's two-step rule, made for conversation); the monthly budget and hard limit apply.
 - **Search** is Postgres full-text search to start; meaning-based search (pgvector) if keyword matching proves too
   literal.
+
+## 22. Writing stage: pasted text, checks, leader voices and when writing is done (user requests)
+
+- **Pasted text is tidied.** Every text box that takes pasted text collapses runs of blank lines into one blank
+  line and strips trailing spaces, non-breaking spaces and invisible characters (`web/src/lib/paste.ts`). A single
+  line break is kept, so a paragraph break (blank line) is always a bigger gap than a line break inside a
+  paragraph. Prompt texts on the Prompts page are exempt, since their spacing is meaningful.
+- **A tick means "checked on this exact text".** Each section has a `content_rev` that a database trigger raises on
+  every change to its text. Grammar, fact and contract checks store the revision they ran on, and the Writing step
+  shows "✓ Checked" only while that revision is still current. The next edit, saved or not, turns it into "Edited
+  since the last check". Checks stay advisory: they never block marking a section written.
+- **Write like a leader.** Editors define leader voices (name, role and a description of how the person writes) on
+  the Leader voices page, in the house file. In the Writing step, and for the whole piece at sign-off, a writer
+  picks a voice and copies a prompt plus their text into their own AI tool, then pastes the result back. Like the
+  humanizer (§14.5), Writ does not restyle text itself: the writer owns the words, and the edited text goes through
+  the same checks. Research and drafting never see these voices.
+- **Writing is complete when every section is marked written.** The Writing step then shows as done, Sign-off
+  becomes the current step, and a banner offers "Continue to sign-off". Approval is sign-off's job, not writing's.
+  Reopening a section makes Writing current again. The stored stage stays `writing` until sign-off, so no data
+  changes: only what the stage bar shows.

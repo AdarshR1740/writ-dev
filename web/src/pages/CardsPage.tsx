@@ -11,7 +11,7 @@ import { formatCost, plural } from "../lib/format";
 import { CARD_TYPE_LABELS, type Card, type CardFields, type CardType } from "../lib/types";
 import { useSetupStatus } from "../components/Layout";
 import { CardForm, emptyCard } from "../components/CardForm";
-import { AiAction, ErrorText, Loading, Modal, PromptHelper, Tabs } from "../components/ui";
+import { AiAction, ErrorText, Loading, Modal, PromptHelper, Tabs, CleanTextarea } from "../components/ui";
 import { StepNav } from "../components/StepNav";
 
 type Mode = "insights" | "data";
@@ -250,7 +250,7 @@ function ImportCards({ mode, onClose, onImport }: { mode: Mode; onClose: () => v
             value, unit, period, sample_size), the JSON the prompt returns, or a spreadsheet column with one JSON
             answer per row.
           </p>
-          <textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste here" aria-label="Cards to import" />
+          <CleanTextarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste here" aria-label="Cards to import" />
           <div className="row">
             <button type="button" className="btn btn-primary" disabled={!text.trim()} onClick={() => check(text)}>Check</button>
             <span className="small muted">or</span>
@@ -318,7 +318,7 @@ function ExtractCards({ companyId, onClose, onSave }: { companyId: string; onClo
           </p>
           <Tabs value={tab} onChange={setTab} options={[{ value: "paste", label: "Paste" }, { value: "upload", label: "Upload file" }]} />
           {tab === "paste" ? (
-            <textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste the full transcript or notes" aria-label="Transcript" />
+            <CleanTextarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste the full transcript or notes" aria-label="Transcript" />
           ) : (
             <input type="file" accept=".txt,.md,.docx,.pdf" aria-label="Transcript file" onChange={async (e) => {
               const f = e.target.files?.[0];

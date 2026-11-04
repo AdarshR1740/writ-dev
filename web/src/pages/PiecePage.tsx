@@ -4,7 +4,7 @@ import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
 import { STAGES, type Contract, type Expectation, type Piece, type Stage, type ThreadMessage } from "../lib/types";
-import { AiAction, ErrorText, Loading } from "../components/ui";
+import { AiAction, ErrorText, Loading, CleanTextarea } from "../components/ui";
 import { ResearchStep } from "../components/ResearchStep";
 import { normalise, stagesFor, type Recipe } from "../lib/recipes";
 import { LineagePanel, ReviewDue, ReviseDialog } from "../components/PieceHistory";
@@ -20,6 +20,11 @@ export function PiecePage() {
   );
   const [view, setView] = useState<Stage | null>(null);
   const [revising, setRevising] = useState(false);
+  // Writing is complete when every section is marked written; sign-off then takes over as the current step.
+  const { data: sectionStates, reload: reloadSections } = useLoad(
+    async () => must<{ status: string }[]>(await supabase.from("piece_sections").select("status").eq("piece_id", pieceId!)),
+    [pieceId],
+  );
 
   if (error) return <ErrorText>{error}</ErrorText>;
   if (!piece) return <Loading />;
@@ -29,6 +34,7 @@ export function PiecePage() {
     .map((s) => (s.key === "done" && !recipe.signoff.required ? { ...s, label: "Finish" } : s));
   const current = stages.findIndex((s) => s.key === piece.stage);
   const shown = view ?? piece.stage;
+  const writingDone = piece.stage === "writing" && (sectionStates?.length ?? 0) > 0 && sectionStates!.every((s) => s.status === "written");
 
   return (
     <div className="page">
@@ -69,7 +75,7 @@ export function PiecePage() {
         {stages.map((s, i) => {
           // Sign-off opens alongside writing; it shows what's still missing.
           const reachable = i <= current || (s.key === "done" && piece.stage === "writing");
-          const state = piece.stage === "done" || i < current ? "done" : i === current ? "current" : reachable ? "current" : "later";
+          const state = piece.stage === "done" || i < current || (writingDone && s.key === "writing") ? "done" : i === current || reachable ? "current" : "later";
           return (
             <li key={s.key}>
               <button
@@ -91,7 +97,7 @@ export function PiecePage() {
       {shown === "contract" && <ContractStep piece={piece} recipe={recipe} onAdvanced={() => { setView(null); reload(); }} />}
       {shown === "research" && <ResearchStep piece={piece} onAdvanced={() => { setView(null); reload(); }} />}
       {shown === "outline" && <OutlineStep piece={piece} onChanged={reload} onAdvanced={() => { setView(null); reload(); }} />}
-      {shown === "writing" && <WritingStep piece={piece} onChanged={reload} />}
+      {shown === "writing" && <WritingStep piece={piece} onChanged={() => { reload(); reloadSections(); }} onContinue={() => setView("done")} finishLabel={recipe.signoff.required ? "Sign-off" : "Finish"} />}
       {shown === "done" && <SignOffStep piece={piece} onChanged={reload} />}
     </div>
   );
@@ -185,7 +191,7 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
             <ol className="expectations">
               {draft.expectations.map((e, i) => (
                 <li key={e.id}>
-                  <textarea rows={2} value={e.text} onChange={(ev) => setExp(e.id, ev.target.value)} aria-label={`Expectation ${i + 1}`} />
+                  <CleanTextarea rows={2} value={e.text} onChange={(ev) => setExp(e.id, ev.target.value)} aria-label={`Expectation ${i + 1}`} />
                   <div className="row" style={{ gap: 2 }}>
                     <button type="button" className="btn btn-quiet btn-small" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
                     <button type="button" className="btn btn-quiet btn-small" disabled={i === draft.expectations.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
@@ -241,7 +247,7 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
           ))}
           <div ref={threadEnd} />
         </div>
-        <textarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)}
+        <CleanTextarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)}
           placeholder={messages.length ? "e.g. Add an expectation about cost" : "Optional: what should this piece do?"} aria-label="Message" style={{ minHeight: 70 }} />
         <AiAction<{ message: ThreadMessage }>
           label={messages.length ? "Send" : "Suggest a contract"}

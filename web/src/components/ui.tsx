@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useRef, useState, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { callFunction, errorMessage } from "../lib/supabase";
+import { cleanPaste } from "../lib/paste";
 
 export function ErrorText({ children }: { children: ReactNode }) {
   if (!children) return null;
@@ -177,3 +178,34 @@ export function Lede({ children, more }: { children: ReactNode; more?: ReactNode
     </div>
   );
 }
+
+/**
+ * A textarea that tidies what is pasted into it (see cleanPaste): extra blank lines are collapsed so a
+ * paragraph break is always one clear blank line. Typing is untouched, and undo still works.
+ */
+export const CleanTextarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function CleanTextarea({ onPaste, ...props }, ref) {
+    return (
+      <textarea
+        {...props}
+        ref={ref}
+        onPaste={(e) => {
+          onPaste?.(e);
+          if (e.defaultPrevented || props.readOnly || props.disabled) return;
+          const pasted = e.clipboardData.getData("text/plain");
+          if (!pasted) return;
+          const cleaned = cleanPaste(pasted);
+          if (cleaned === pasted) return;
+          e.preventDefault();
+          const el = e.currentTarget;
+          // Insert as typing would, so the browser's undo history and React's onChange both see it.
+          el.focus();
+          if (!document.execCommand("insertText", false, cleaned)) {
+            el.setRangeText(cleaned, el.selectionStart, el.selectionEnd, "end");
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        }}
+      />
+    );
+  },
+);

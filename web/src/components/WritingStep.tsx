@@ -4,9 +4,21 @@ import { must, useLoad } from "../lib/useLoad";
 import { formatCost } from "../lib/format";
 import type { BriefBullet, CheckResult, Contract, FactFlag, Piece, ResearchItem, Section } from "../lib/types";
 import { ResearchStep } from "./ResearchStep";
-import { AiAction, CopyButton, ErrorText, Loading } from "./ui";
+import { AiAction, CopyButton, ErrorText, Loading, CleanTextarea } from "./ui";
 import { HUMANIZER_PROMPT } from "../lib/sections";
 import { normalise, type Recipe } from "../lib/recipes";
+import { WriteLike } from "./WriteLike";
+
+/** The state of one check against the text as it is now. A tick shows only while the text is unchanged since the check. */
+type CheckState = "never" | "current" | "stale";
+
+function CheckStatus({ state, summary }: { state: CheckState; summary?: string }) {
+  if (state === "current") {
+    return <span className="check-state current"><span aria-hidden="true">✓</span> Checked{summary ? `: ${summary}` : ""}</span>;
+  }
+  if (state === "stale") return <span className="check-state stale">Edited since the last check. Check again.</span>;
+  return <span className="check-state">Not checked yet</span>;
+}
 
 const STATUS_LABEL: Record<Section["status"], string> = {
   research: "Research",
@@ -16,7 +28,13 @@ const STATUS_LABEL: Record<Section["status"], string> = {
 };
 
 /** Sections: research -> review -> brief -> write, one section at a time or research up front. */
-export function WritingStep({ piece, onChanged }: { piece: Piece; onChanged: () => void }) {
+export function WritingStep({ piece, onChanged, onContinue, finishLabel = "Sign-off" }: {
+  piece: Piece;
+  onChanged: () => void;
+  /** Opens the sign-off step. */
+  onContinue?: () => void;
+  finishLabel?: string;
+}) {
   const { data, error, reload } = useLoad(async () => {
     const [sections, contract] = await Promise.all([
       supabase.from("piece_sections").select("*").eq("piece_id", piece.id).order("position").then(must<Section[]>),
@@ -61,6 +79,16 @@ export function WritingStep({ piece, onChanged }: { piece: Piece; onChanged: () 
         ))}
       </nav>
       <div className="stack-lg" style={{ minWidth: 0 }}>
+        {sections.every((s) => s.status === "written") && piece.stage === "writing" && (
+          <div className="notice ok-notice row" role="status">
+            <span>
+              <strong>Writing is complete.</strong>{" "}
+              {sections.length === 1 ? "The text is written." : `All ${sections.length} sections are written.`} You can still reopen a section to edit it.
+            </span>
+            <span className="spacer" />
+            {onContinue && <button type="button" className="btn btn-primary btn-small" onClick={onContinue}>Continue to {finishLabel.toLowerCase()}</button>}
+          </div>
+        )}
         <SectionWork
           key={current.id}
           piece={piece}
@@ -214,6 +242,9 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // How many times the text has been saved since this copy of the section was loaded. A check is tied to
+  // the revision it ran on, so any save after that means the check no longer describes the text.
+  const [saves, setSaves] = useState({ rev: section.content_rev, n: 0 });
   const { data: items } = useItems(piece.id, itemScope(recipe, section.id));
   const timer = useRef<number | null>(null);
   const written = section.status === "written";
@@ -228,7 +259,10 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
       const { error: err } = await supabase.from("piece_sections").update({ content: text }).eq("id", section.id);
       setSaving(false);
       if (err) setError(err.message);
-      else setSavedText(text);
+      else {
+        setSavedText(text);
+        setSaves((s) => ({ rev: section.content_rev, n: (s.rev === section.content_rev ? s.n : 0) + 1 }));
+      }
     }, 900);
     return () => { if (timer.current) window.clearTimeout(timer.current); };
   }, [text, savedText, section.id]);
@@ -237,6 +271,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
     if (text === savedText) return;
     must(await supabase.from("piece_sections").update({ content: text }).eq("id", section.id).select("id"));
     setSavedText(text);
+    setSaves((s) => ({ rev: section.content_rev, n: (s.rev === section.content_rev ? s.n : 0) + 1 }));
   }
 
   async function act(fn: () => Promise<void>) {
@@ -253,6 +288,23 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
 
   const words = text.trim() ? text.trim().split(/\s+/).length : 0;
   const unsaved = text !== savedText;
+
+  // A tick shows only while the text is exactly what the check ran on.
+  const unchanged = text === section.content && !(saves.rev === section.content_rev && saves.n > 0);
+  const stateOf = (ran: boolean, rev: number | null | undefined): CheckState =>
+    !ran ? "never" : unchanged && rev === section.content_rev ? "current" : "stale";
+  const grammarState = stateOf(Boolean(section.grammar_check), section.grammar_check?.rev);
+  const factState = stateOf(Boolean(section.fact_check), section.fact_check?.rev);
+  const contractRuns = recipe.checks.contract && recipe.contract.mode !== "off" && section.expectation_ids.length > 0;
+  const contractState = stateOf(Boolean(section.contract_check), section.contract_check?.rev);
+  const notCurrent = [
+    recipe.checks.grammar && grammarState !== "current" ? "Grammar" : null,
+    recipe.checks.fact && factState !== "current" ? "Facts" : null,
+    contractRuns && recipe.checks.contract && contractState !== "current" ? "Reader contract" : null,
+  ].filter(Boolean) as string[];
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const grammarFound = fixes?.length ?? section.grammar_check?.found ?? 0;
+  const contractOpen = section.contract_check?.results.filter((r) => r.status !== "met").length ?? 0;
 
   // Open flags from the checks, counted where the writer is looking.
   const flagCount = (fixes?.length ?? 0) + (section.fact_check?.flags.length ?? 0)
@@ -287,12 +339,18 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
               })}>Mark section written</button>
             )}
           </header>
-          <textarea className="doc writer" value={text} readOnly={written} onChange={(e) => setText(e.target.value)}
+          <CleanTextarea className="doc writer" value={text} readOnly={written} onChange={(e) => setText(e.target.value)}
             placeholder="Write this section in your own words, from the brief on the right." aria-label="Section text" />
         </section>
 
         <ErrorText>{error}</ErrorText>
         {note && <p className="notice small">{note}</p>}
+
+        {!written && text.trim() && notCurrent.length > 0 && (
+          <p className="small faint">
+            Not checked since your last edit: {notCurrent.join(", ")}. The checks are advisory; you can still mark the section written.
+          </p>
+        )}
 
         {!written && (
           <div className="checks" id="checks">
@@ -300,6 +358,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
               <div className="check-head">
                 <strong>Grammar</strong>
                 <span className="small muted">Spelling, grammar and punctuation only. Never rewrites your sentences.</span>
+                <CheckStatus state={grammarState} summary={grammarFound === 0 ? "no corrections" : plural(grammarFound, "suggestion", "suggestions")} />
               </div>
               <AiAction<{ suggestions: GrammarFix[]; cost_usd: number | null }>
                 label="Check grammar"
@@ -307,7 +366,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
                 disabled={!text.trim() || unsaved}
                 reason={!text.trim() ? "Write something first" : "Saving…"}
                 payload={{ task: "grammar_check", section_id: section.id, text }}
-                onDone={(r) => { setFixes(r.suggestions); setNote(r.suggestions.length ? null : `No corrections needed (${formatCost(r.cost_usd)}).`); }}
+                onDone={(r) => { setFixes(r.suggestions); setNote(r.suggestions.length ? null : `No corrections needed (${formatCost(r.cost_usd)}).`); onChanged(); }}
               />
               {fixes && fixes.length > 0 && (
                 <ul className="fixes">
@@ -332,6 +391,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
               <div className="check-head">
                 <strong>Facts</strong>
                 <span className="small muted">Flags numbers and claims that don't match your approved research.</span>
+                <CheckStatus state={factState} summary={section.fact_check && section.fact_check.flags.length > 0 ? `${plural(section.fact_check.flags.length, "flag", "flags")} to look at` : "every claim matches"} />
               </div>
               <AiAction label="Check facts" primary={false} disabled={!text.trim() || unsaved}
                 reason={!text.trim() ? "Write something first" : "Saving…"}
@@ -355,6 +415,9 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
               <div className="check-head">
                 <strong>Reader contract</strong>
                 <span className="small muted">Does this section deliver what it owes? No score.</span>
+                {section.expectation_ids.length > 0 && (
+                  <CheckStatus state={contractState} summary={contractOpen > 0 ? `${plural(contractOpen, "expectation", "expectations")} not fully met` : "everything it owes is met"} />
+                )}
               </div>
               <AiAction label="Check against contract" primary={false} disabled={!text.trim() || unsaved || section.expectation_ids.length === 0}
                 reason={section.expectation_ids.length === 0 ? "This section owes nothing in the contract" : !text.trim() ? "Write something first" : "Saving…"}
@@ -374,6 +437,14 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
               <p className="small muted">
                 Paste it into ChatGPT, Claude or Gemini, then paste the result back into the box above. Check numbers and names before you keep it.
               </p>
+            </div>
+
+            <div className="check">
+              <div className="check-head">
+                <strong>Write like…</strong>
+                <span className="small muted">Edit this section to sound like one of your company's leaders, in your own AI tool. Writ never rewrites your sentences.</span>
+              </div>
+              <WriteLike text={text} what="section" />
             </div>
 
             {recipe.writing.ai_draft && <details className="helper">

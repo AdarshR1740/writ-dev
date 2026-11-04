@@ -4,7 +4,7 @@ import { callFunction, errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { useCompany, useSession } from "../lib/session";
 import type { Estimate } from "../lib/types";
-import { ErrorText } from "./ui";
+import { ErrorText, CleanTextarea } from "./ui";
 
 interface Source { n: number; kind: string; label: string; title: string; path: string; excerpt: string }
 interface AskMessage {
@@ -143,7 +143,7 @@ export function AskWrit({ onClose }: { onClose: () => void }) {
 
       <form className="ask-input" onSubmit={(e) => { e.preventDefault(); ask(question); }}>
         <ErrorText>{error}</ErrorText>
-        <textarea ref={input} rows={2} value={question} maxLength={1500} onChange={(e) => setQuestion(e.target.value)}
+        <CleanTextarea ref={input} rows={2} value={question} maxLength={1500} onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(question); } }}
           placeholder="Ask about your pieces, cards or house file" aria-label="Your question" />
         <div className="row">

@@ -6,7 +6,7 @@ import type { InputMethod, MaterialCopy } from "../lib/sections";
 import type { ContextDocument, ContextInput, Proposal } from "../lib/types";
 import { AddMaterial } from "./AddMaterial";
 import { diffStats, Redline } from "./Redline";
-import { AiAction, ErrorText, Loading } from "./ui";
+import { AiAction, ErrorText, Loading, CleanTextarea } from "./ui";
 
 interface Loaded {
   doc: ContextDocument;
@@ -121,7 +121,7 @@ export function DocumentWorkbench({
             {reviewEdit === null ? (
               <Redline before={doc.content} after={proposal.proposed_content} />
             ) : (
-              <textarea className="doc" value={reviewEdit} onChange={(e) => setReviewEdit(e.target.value)} aria-label="Edit before accepting" />
+              <CleanTextarea className="doc" value={reviewEdit} onChange={(e) => setReviewEdit(e.target.value)} aria-label="Edit before accepting" />
             )}
             <footer>
               <button type="button" className="btn btn-primary" onClick={accept} disabled={busy || Boolean(stale)}>
@@ -155,7 +155,7 @@ export function DocumentWorkbench({
               )}
             </header>
             {editing !== null ? (
-              <textarea className="doc" value={editing} onChange={(e) => setEditing(e.target.value)} aria-label="Document text" autoFocus />
+              <CleanTextarea className="doc" value={editing} onChange={(e) => setEditing(e.target.value)} aria-label="Document text" autoFocus />
             ) : doc.content ? (
               <div className="doc-render">{doc.content}</div>
             ) : (

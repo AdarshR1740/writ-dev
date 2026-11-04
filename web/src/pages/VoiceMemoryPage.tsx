@@ -5,7 +5,7 @@ import { errorMessage, supabase } from "../lib/supabase";
 import { useCompany, useSession } from "../lib/session";
 import { must, useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
-import { ErrorText, Loading, Lede, PromptHelper } from "../components/ui";
+import { ErrorText, Loading, Lede, PromptHelper, CleanTextarea } from "../components/ui";
 import { StepNav } from "../components/StepNav";
 import { VOICE_MEMORY_PROMPT } from "../lib/sections";
 import { parseRules } from "../lib/rules";
@@ -57,7 +57,7 @@ export function VoiceMemoryPage() {
         <div className="card stack" style={{ padding: 16 }}>
           <h3>Paste a list of rules</h3>
           <p className="small muted">One rule per line. Bullets and numbers are removed, and rules you already have are skipped. You can edit or delete any of them afterwards.</p>
-          <textarea rows={5} value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder={"Open with the claim, not the context\nWrite numbers as digits"} aria-label="Rules to add" />
+          <CleanTextarea rows={5} value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder={"Open with the claim, not the context\nWrite numbers as digits"} aria-label="Rules to add" />
           {(() => {
             const rules = parseRules(pasted, data.map((m) => m.rule));
             return (

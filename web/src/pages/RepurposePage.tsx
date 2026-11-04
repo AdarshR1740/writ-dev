@@ -14,7 +14,7 @@ import {
   type ResearchItem,
   type Shape,
 } from "../lib/types";
-import { AiAction, ErrorText, Loading, Lede } from "../components/ui";
+import { AiAction, ErrorText, Loading, Lede, CleanTextarea } from "../components/ui";
 
 const SHAPES: { value: Shape; label: string; detail: string }[] = [
   { value: "split", label: "Split", detail: "One piece into several, e.g. a blog into five LinkedIn posts, each with its own angle." },
@@ -93,7 +93,7 @@ export function NewRepurposePage() {
       </div>
       <label className="field">
         <span>Specific requirements (optional)</span>
-        <textarea rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)} style={{ minHeight: 80 }}
+        <CleanTextarea rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)} style={{ minHeight: 80 }}
           placeholder="Anything the shape doesn't capture, e.g. 'one post per customer story', 'keep the script under 4 minutes', 'end each post with a question'." />
       </label>
       <ErrorText>{error}</ErrorText>
@@ -211,7 +211,7 @@ export function RepurposePlanPage() {
                   placeholder={plan.shape === "split" ? "The point this piece makes" : "Working title"} aria-label="Heading" className="heading-input" />
                 <input type="text" value={e.angle} onChange={(ev) => update(i, { angle: ev.target.value })}
                   placeholder="Angle: the story or framing that makes it different" aria-label="Angle" />
-                <textarea rows={2} value={e.notes} onChange={(ev) => update(i, { notes: ev.target.value })} style={{ minHeight: 56 }}
+                <CleanTextarea rows={2} value={e.notes} onChange={(ev) => update(i, { notes: ev.target.value })} style={{ minHeight: 56 }}
                   placeholder="Notes for the writer (optional)" aria-label="Notes" />
                 {hasOutline && (
                   <div className="stack" style={{ gap: 6 }}>

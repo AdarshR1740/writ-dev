@@ -10,7 +10,7 @@ import { STAGES, type Format, type Piece } from "../lib/types";
 import { LONG_FORM, normalise, presetFor, stagesFor } from "../lib/recipes";
 import { FORMAT_TEMPLATES } from "../lib/sections";
 import { useSetupStatus } from "../components/Layout";
-import { ErrorText, Loading, Modal, Lede } from "../components/ui";
+import { ErrorText, Loading, Modal, Lede, CleanTextarea } from "../components/ui";
 import { GettingStarted } from "../components/GettingStarted";
 
 type Row = Pick<Piece, "id" | "code" | "version" | "title" | "topic" | "primary_keyword" | "stage" | "format_id" | "revised_by" | "review_due_at" | "updated_at">;
@@ -246,7 +246,7 @@ function NewPiece({ onClose }: { onClose: () => void }) {
         )}
         <label className="field">
           <span>{recipe.outline.mode === "off" ? "The point you want to make (optional)" : "Topic and angle (optional)"}</span>
-          <textarea rows={3} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="What you want to say, and why now" style={{ minHeight: 80 }} />
+          <CleanTextarea rows={3} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="What you want to say, and why now" style={{ minHeight: 80 }} />
         </label>
         {(recipe.brief.goal || recipe.brief.audience) && (
           <div className="grid-2">

@@ -4,7 +4,7 @@ import { ACCEPTED_FILES, readFileText } from "../lib/files";
 import type { InputMethod, MaterialCopy } from "../lib/sections";
 import { MAX_LINKS, parseLinks } from "../lib/links";
 import { plural } from "../lib/format";
-import { ErrorText, Tabs } from "./ui";
+import { ErrorText, Tabs, CleanTextarea } from "./ui";
 
 interface FetchResult {
   ok: boolean;
@@ -140,7 +140,7 @@ export function AddMaterial({
           </label>
           <label className="field">
             <span>Text</span>
-            <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={copy.textPlaceholder} rows={8} />
+            <CleanTextarea value={text} onChange={(e) => setText(e.target.value)} placeholder={copy.textPlaceholder} rows={8} />
           </label>
           <div className="row">
             <button type="button" className="btn btn-primary" onClick={addPaste} disabled={busy || !text.trim()}>
@@ -162,7 +162,7 @@ export function AddMaterial({
         <div className="stack">
           <label className="field">
             <span>Links, one per line</span>
-            <textarea
+            <CleanTextarea
               rows={5}
               value={links}
               onChange={(e) => setLinks(e.target.value)}

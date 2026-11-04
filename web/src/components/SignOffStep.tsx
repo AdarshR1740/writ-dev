@@ -7,9 +7,10 @@ import { formatDate, plural } from "../lib/format";
 import { useCompany } from "../lib/session";
 import type { Piece, Section } from "../lib/types";
 import { ContractResults } from "./WritingStep";
-import { AiAction, CopyButton, ErrorText, Loading } from "./ui";
+import { AiAction, CopyButton, ErrorText, Loading, CleanTextarea } from "./ui";
 import { useSession } from "../lib/session";
 import { SeoGeoPanel } from "./SeoGeoPanel";
+import { WriteLike } from "./WriteLike";
 import { normalise, type Recipe } from "../lib/recipes";
 
 interface Record_ {
@@ -171,9 +172,18 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
               </p>
               {recipe.checks.customer_approval && <CustomerApproval piece={piece} onRecorded={onChanged} />}
               {recipe.signoff.final_paste && (
+                <details className="helper">
+                  <summary>Edit the whole piece to sound like a leader</summary>
+                  <div className="helper-body">
+                    <WriteLike text={draft} what="piece" />
+                    <p className="small muted">Paste the edited version into the box below. The sections above stay as you wrote them.</p>
+                  </div>
+                </details>
+              )}
+              {recipe.signoff.final_paste && (
                 <label className="field">
                   <span>Final published version (optional)</span>
-                  <textarea rows={4} value={finalText} onChange={(e) => setFinalText(e.target.value)} style={{ minHeight: 90 }}
+                  <CleanTextarea rows={4} value={finalText} onChange={(e) => setFinalText(e.target.value)} style={{ minHeight: 90 }}
                     placeholder="Edited it elsewhere? Paste the version you publish. The difference teaches the tool your edits." />
                 </label>
               )}

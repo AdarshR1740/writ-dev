@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CleanTextarea } from "./ui";
 import type { CardFields, CardType, Citation } from "../lib/types";
 import { CARD_TYPE_LABELS } from "../lib/types";
 import { CARD_TYPES } from "../lib/cards";
@@ -78,7 +79,7 @@ export function CardForm({
       )}
       <label className="field">
         <span>Detail</span>
-        <textarea rows={4} value={c.detail} onChange={(e) => set("detail", e.target.value)} placeholder="2–5 sentences with the specifics, so the card stands alone" />
+        <CleanTextarea rows={4} value={c.detail} onChange={(e) => set("detail", e.target.value)} placeholder="2–5 sentences with the specifics, so the card stands alone" />
       </label>
       <div className="grid-3">
         <label className="field"><span>Who said it</span><input type="text" value={c.source_who} onChange={(e) => set("source_who", e.target.value)} /></label>
