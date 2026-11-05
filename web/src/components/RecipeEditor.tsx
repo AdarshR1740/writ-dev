@@ -13,7 +13,7 @@ type Control = Shown & (
 // Sub-settings only show while their step is on.
 // A module is "off" when its main switch is off; it then shows only that switch.
 const OFF: Record<string, (r: Recipe) => boolean> = {
-  "Reader contract": (r) => r.contract.mode === "off",
+  "Scope": (r) => r.contract.mode === "off",
   Analysis: (r) => !r.analysis.enabled,
   Outline: (r) => r.outline.mode === "off",
 };
@@ -33,12 +33,12 @@ const MODULES: { title: string; lede: string; controls: Control[] }[] = [
     ],
   },
   {
-    title: "Reader contract",
-    lede: "What the reader expects; later checks compare the writing against it.",
+    title: "Scope",
+    lede: "What the piece must answer and cover; later checks compare the writing against it.",
     controls: [
-      { path: "contract.mode", label: "Contract", kind: "select", options: [
-        { value: "full", label: "Full (3 to 7 expectations)" },
-        { value: "lite", label: "Lite (one point, up to 2 expectations)" },
+      { path: "contract.mode", label: "Scope", kind: "select", options: [
+        { value: "full", label: "Full (3 to 7 points to cover)" },
+        { value: "lite", label: "Lite (one point, up to 2 more)" },
         { value: "off", label: "Off" },
       ] },
       { show: (r) => r.contract.mode !== "off", sub: true, path: "contract.ai_thread", label: "AI suggestions in a conversation", kind: "bool" },
@@ -67,7 +67,7 @@ const MODULES: { title: string; lede: string; controls: Control[] }[] = [
       { show: analysis, sub: true, path: "analysis.tensions", label: "Tensions between sources", kind: "bool" },
       { show: analysis, sub: true, path: "analysis.insight_vs_consensus", label: "Your insight vs. the consensus", kind: "bool" },
       { show: analysis, sub: true, path: "analysis.gaps", label: "Gaps and expert questions", kind: "bool" },
-      { show: analysis, sub: true, path: "analysis.contract_suggestions", label: "Suggest contract changes", kind: "bool" },
+      { show: analysis, sub: true, path: "analysis.contract_suggestions", label: "Suggest scope changes", kind: "bool" },
     ],
   },
   {
@@ -108,7 +108,7 @@ const MODULES: { title: string; lede: string; controls: Control[] }[] = [
     controls: [
       { path: "checks.grammar", label: "Grammar", kind: "bool" },
       { path: "checks.fact", label: "Facts against approved research", kind: "bool" },
-      { path: "checks.contract", label: "Reader contract", kind: "bool" },
+      { path: "checks.contract", label: "Scope check", kind: "bool" },
       { path: "checks.seo", label: "SEO", kind: "bool" },
       { path: "checks.geo", label: "GEO (AI answer engines)", kind: "bool" },
       { path: "checks.customer_approval", label: "Customer approval, recorded before sign-off", kind: "bool" },

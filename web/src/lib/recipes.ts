@@ -173,15 +173,15 @@ export function validate(r: Recipe): Issue[] {
   need(r.analysis.enabled && !r.research.enabled, "analysis.enabled", "Analysis needs research.");
   need(r.analysis.enabled && !(r.analysis.tensions || r.analysis.insight_vs_consensus || r.analysis.gaps || r.analysis.contract_suggestions),
     "analysis.enabled", "Turn on at least one part of the analysis, or switch it off.");
-  need(r.analysis.contract_suggestions && r.contract.mode === "off", "analysis.contract_suggestions", "Contract suggestions need a reader contract.");
-  need(r.contract.ai_thread && r.contract.mode === "off", "contract.ai_thread", "The contract conversation needs a reader contract.");
+  need(r.analysis.contract_suggestions && r.contract.mode === "off", "analysis.contract_suggestions", "Scope suggestions need a scope.");
+  need(r.contract.ai_thread && r.contract.mode === "off", "contract.ai_thread", "The scope conversation needs a scope.");
   need(r.outline.mode === "fixed" && r.outline.template.filter((h) => h.trim()).length === 0, "outline.template", "A fixed outline needs at least one heading.");
   need(r.outline.ai_thread && r.outline.mode !== "free", "outline.ai_thread", "Outline suggestions need a free outline.");
   need(r.outline.seo_geo_check && r.outline.mode === "off", "outline.seo_geo_check", "The outline check needs an outline.");
   need(r.outline.seo_geo_check && !r.brief.keyword, "outline.seo_geo_check", "The outline SEO/GEO check needs a primary keyword.");
   need(r.sections.research && !anySource, "sections.research", "Section research needs at least one research source.");
   need(r.checks.seo && !r.brief.keyword, "checks.seo", "The SEO check needs a primary keyword in the brief.");
-  need(r.checks.contract && r.contract.mode === "off", "checks.contract", "The contract check needs a reader contract.");
+  need(r.checks.contract && r.contract.mode === "off", "checks.contract", "The scope check needs a scope.");
   need(r.checks.fact && !r.research.enabled && !r.sections.research, "checks.fact", "The fact check compares against approved research, so it needs research.");
   need(r.checks.customer_approval && !r.brief.customer, "checks.customer_approval", "Customer approval needs the customer field in the brief.");
   need(r.signoff.editor_required && !r.signoff.required, "signoff.editor_required", "An editor can only be required when sign-off is required.");

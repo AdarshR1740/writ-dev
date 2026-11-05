@@ -239,7 +239,7 @@ export interface ResearchItem {
 }
 
 export const STAGES: { key: Stage; label: string }[] = [
-  { key: "contract", label: "Reader contract" },
+  { key: "contract", label: "Scope" },
   { key: "research", label: "Research" },
   { key: "outline", label: "Outline" },
   { key: "writing", label: "Writing" },

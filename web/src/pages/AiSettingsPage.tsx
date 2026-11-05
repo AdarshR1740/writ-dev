@@ -19,7 +19,7 @@ import { ErrorText, Loading, Lede } from "../components/ui";
 const TASK_NAMES: Record<string, string> = {
   consolidate: "Merge document",
   extract_cards: "Extract insights",
-  contract_suggest: "Reader contract",
+  contract_suggest: "Scope",
   research_search: "Web research",
   research_extract: "Source findings",
   analysis: "Research analysis",
@@ -28,7 +28,7 @@ const TASK_NAMES: Record<string, string> = {
   section_draft: "AI draft",
   grammar_check: "Grammar check",
   fact_check: "Fact check",
-  contract_check: "Contract check",
+  contract_check: "Scope check",
   learn_voice: "Voice learning",
   seo_geo_check: "SEO & GEO check",
 };

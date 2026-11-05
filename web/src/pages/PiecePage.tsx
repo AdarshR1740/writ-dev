@@ -168,30 +168,26 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
 
   return (
     <div className="workbench">
-      <section className="doc-surface" aria-label="Reader contract">
+      <section className="doc-surface" aria-label="Scope">
         <header>
-          <strong>Reader contract</strong>
+          <strong>Scope</strong>
           {contract.confirmed_at && !dirty ? <span className="tag ok">Confirmed</span> : <span className="tag">Draft</span>}
           <span className="spacer" />
           {dirty && <button type="button" className="btn btn-small" disabled={busy} onClick={() => run(() => save())}>Save</button>}
         </header>
-        <div className="stack" style={{ padding: "18px 20px 22px" }}>
-          <p className="small muted">
-            {lite
-              ? "This format uses a lite contract: the one point the piece must land, plus up to two expectations."
-              : "What a reader expects when they open this piece. Each expectation must be specific enough to fail: the draft is checked against these later, not against a score."}
-          </p>
+        <div className="stack" style={{ padding: "18px 20px 22px", gap: 28 }}>
+          {lite && <p className="small muted">A short format: one point to land, plus up to two more to cover.</p>}
           <label className="field">
-            <span>Core question</span>
+            <span>Core question this piece wants to answer</span>
             <input type="text" value={draft.core_question} onChange={(e) => setDraft({ ...draft, core_question: e.target.value })}
-              placeholder="What are the emerging supply chain technologies?" />
+              placeholder="The one question a reader wants answered" />
           </label>
           <div className="field">
-            <span>Expectations</span>
+            <span>What other points or ideas to include</span>
             <ol className="expectations">
               {draft.expectations.map((e, i) => (
                 <li key={e.id}>
-                  <CleanTextarea rows={2} value={e.text} onChange={(ev) => setExp(e.id, ev.target.value)} aria-label={`Expectation ${i + 1}`} />
+                  <CleanTextarea rows={2} value={e.text} onChange={(ev) => setExp(e.id, ev.target.value)} placeholder="e.g. A checklist to test whether your messaging is ready" aria-label={`Point ${i + 1}`} />
                   <div className="row" style={{ gap: 2 }}>
                     <button type="button" className="btn btn-quiet btn-small" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
                     <button type="button" className="btn btn-quiet btn-small" disabled={i === draft.expectations.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
@@ -202,7 +198,7 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
             </ol>
             <div>
               <button type="button" className="btn btn-small" disabled={draft.expectations.length >= maxExpectations} onClick={() => setDraft({ ...draft, expectations: [...draft.expectations, { id: newId(), text: "" }] })}>
-                Add expectation
+                Add a point
               </button>
             </div>
           </div>
@@ -214,7 +210,7 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
               if (err) throw err;
               onAdvanced();
             })}>
-              {contract.confirmed_at && !dirty ? "Confirmed" : "Confirm contract"}
+              {contract.confirmed_at && !dirty ? "Confirmed" : "Confirm scope"}
             </button>
             {contract.confirmed_at && !dirty && <span className="small muted">Editing it later reopens it for confirmation.</span>}
           </div>
@@ -232,7 +228,7 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
               <p>{m.content}</p>
               {m.role === "ai" && m.payload?.expectations && (
                 <details>
-                  <summary className="small">Suggested contract ({m.payload.expectations.length} expectations)</summary>
+                  <summary className="small">Suggested scope ({m.payload.expectations.length} points)</summary>
                   <p className="small"><strong>{m.payload.core_question}</strong></p>
                   <ol className="small">{m.payload.expectations.map((x, i) => <li key={i}>{x}</li>)}</ol>
                   <button type="button" className="btn btn-small" onClick={() => setDraft({
@@ -248,9 +244,9 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
           <div ref={threadEnd} />
         </div>
         <CleanTextarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)}
-          placeholder={messages.length ? "e.g. Add an expectation about cost" : "Optional: what should this piece do?"} aria-label="Message" style={{ minHeight: 70 }} />
+          placeholder={messages.length ? "e.g. Add a point about cost" : "Optional: what should this piece do?"} aria-label="Message" style={{ minHeight: 70 }} />
         <AiAction<{ message: ThreadMessage }>
-          label={messages.length ? "Send" : "Suggest a contract"}
+          label={messages.length ? "Send" : "Suggest a scope"}
           disabled={dirty}
           reason="Save your edits first so the AI sees them"
           payload={{ task: "contract_suggest", piece_id: piece.id, message }}

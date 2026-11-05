@@ -7,10 +7,11 @@ import { useCompany } from "../lib/session";
 import { must, useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
 import { STAGES, type Format, type Piece } from "../lib/types";
-import { LONG_FORM, normalise, presetFor, stagesFor } from "../lib/recipes";
+import { LONG_FORM, normalise, presetFor } from "../lib/recipes";
 import { FORMAT_TEMPLATES } from "../lib/sections";
 import { useSetupStatus } from "../components/Layout";
 import { ErrorText, Loading, Modal, CleanTextarea } from "../components/ui";
+import { FormatPicker } from "../components/FormatPicker";
 import { GettingStarted } from "../components/GettingStarted";
 
 type Row = Pick<Piece, "id" | "code" | "version" | "title" | "topic" | "primary_keyword" | "stage" | "format_id" | "revised_by" | "review_due_at" | "updated_at">;
@@ -59,7 +60,7 @@ export function PiecesPage() {
 }
 
 const NEXT_STEP: Record<Piece["stage"], string> = {
-  contract: "Agree the reader contract",
+  contract: "Agree the scope",
   research: "Review the research",
   outline: "Confirm the outline",
   writing: "Keep writing",
@@ -202,7 +203,7 @@ function NewPiece({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      let formatId = template ? null : format || null;
+      let formatId = template || format === "none" ? null : format || null;
       if (template) {
         const [created] = must<{ id: string }[]>(await supabase.from("formats").insert({
           company_id: company.id, name: template.name, description: template.description,
@@ -237,69 +238,56 @@ function NewPiece({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal title="Start a piece" onClose={onClose}>
-      <form className="stack" onSubmit={create}>
-        <label className="field">
-          <span>Working title</span>
+      <form className="stack piece-form" onSubmit={create}>
+        <label className="field field-row">
+          <span>Format <span className="req" aria-hidden="true">*</span></span>
+          <FormatPicker value={format} onChange={setFormat} loading={!formats}
+            own={(formats ?? []).map((f) => ({ value: f.id, name: f.name, description: f.description, templateKey: f.template_key }))}
+            templates={unused.map((t) => ({ value: `tpl:${t.key}`, name: t.name, description: t.description, templateKey: t.key }))}
+            none={{ value: "none", name: "No format", description: "The full workflow, with every step.", templateKey: null }} />
+          {template && <small>{template.description} Starting the piece adds this format, which you can adjust under Formats.</small>}
+        </label>
+        <label className="field field-row">
+          <span>Working title <span className="req" aria-hidden="true">*</span></span>
           <input type="text" required maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Emerging supply chain technologies" />
         </label>
-        <label className="field">
-          <span>Format</span>
-          <select value={format} onChange={(e) => setFormat(e.target.value)}>
-            <option value="">No format (full workflow)</option>
-            {(formats ?? []).length > 0 && (
-              <optgroup label="Your formats">
-                {(formats ?? []).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-              </optgroup>
-            )}
-            {unused.length > 0 && (
-              <optgroup label="Templates (added to your formats)">
-                {unused.map((t) => <option key={t.key} value={`tpl:${t.key}`}>{t.name}</option>)}
-              </optgroup>
-            )}
-          </select>
-          <small>
-            {template && <>{template.description} Starting the piece adds this format, which you can adjust under Formats. </>}
-            Workflow: {stagesFor(recipe).filter((x) => x !== "done").map((x) => STAGES.find((st) => st.key === x)?.label).join(" → ")} → {recipe.signoff.required ? "Sign-off" : "Mark done"}
-          </small>
-        </label>
         {recipe.brief.keyword && (
-          <label className="field">
+          <label className="field field-row">
             <span>Primary keyword</span>
             <input type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="From Semrush, Ahrefs…" />
-            <small>Bring it from your keyword research; the tool doesn't pick keywords.</small>
           </label>
         )}
-        <label className="field">
-          <span>{recipe.outline.mode === "off" ? "The point you want to make (optional)" : "Topic and angle (optional)"}</span>
-          <CleanTextarea rows={3} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="What you want to say, and why now" style={{ minHeight: 80 }} />
+        <label className="field field-row field-top">
+          <span>{recipe.outline.mode === "off" ? "The point you want to make" : "Topic and angle"}</span>
+          <CleanTextarea rows={3} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="What you want to say, and why now" style={{ minHeight: 80, resize: "vertical" }} />
         </label>
         {(recipe.brief.goal || recipe.brief.audience) && (
-          <div className="grid-2">
+          <>
             {recipe.brief.goal && (
-              <label className="field">
-                <span>Goal (optional)</span>
+              <label className="field field-row">
+                <span>Goal</span>
                 <input type="text" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="e.g. demo requests from ops leaders" />
               </label>
             )}
             {recipe.brief.audience && (
-              <label className="field">
-                <span>Audience notes (optional)</span>
+              <label className="field field-row">
+                <span>Audience notes</span>
                 <input type="text" value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="Anything beyond your ICP" />
               </label>
             )}
-          </div>
+          </>
         )}
         {recipe.brief.customer && (
-          <div className="grid-2">
-            <label className="field"><span>Customer</span><input type="text" value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="Company name" /></label>
-            <label className="field"><span>Approval contact</span><input type="text" value={approvalContact} onChange={(e) => setApprovalContact(e.target.value)} placeholder="Who signs off on their side" /></label>
-          </div>
+          <>
+            <label className="field field-row"><span>Customer</span><input type="text" value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="Company name" /></label>
+            <label className="field field-row"><span>Approval contact</span><input type="text" value={approvalContact} onChange={(e) => setApprovalContact(e.target.value)} placeholder="Who signs off on their side" /></label>
+          </>
         )}
         {recipe.brief.offer && (
-          <div className="grid-2">
-            <label className="field"><span>Offer</span><input type="text" value={offer} onChange={(e) => setOffer(e.target.value)} placeholder="What's on offer, with terms" /></label>
-            <label className="field"><span>Call to action</span><input type="text" value={cta} onChange={(e) => setCta(e.target.value)} placeholder="e.g. Book a demo" /></label>
-          </div>
+          <>
+            <label className="field field-row"><span>Offer</span><input type="text" value={offer} onChange={(e) => setOffer(e.target.value)} placeholder="What's on offer, with terms" /></label>
+            <label className="field field-row"><span>Call to action</span><input type="text" value={cta} onChange={(e) => setCta(e.target.value)} placeholder="e.g. Book a demo" /></label>
+          </>
         )}
         {hasSections && (
           <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
@@ -310,8 +298,8 @@ function NewPiece({ onClose }: { onClose: () => void }) {
         )}
         <ErrorText>{error}</ErrorText>
         <div className="row">
-          <button type="submit" className="btn btn-primary" disabled={busy || !title.trim()}>{busy ? "Starting…" : "Start piece"}</button>
-          {!title.trim() && <span className="small muted disabled-reason">Add a working title</span>}
+          <button type="submit" className="btn btn-primary" disabled={busy || !title.trim() || !format}>{busy ? "Starting…" : "Start piece"}</button>
+          {!format || !title.trim() ? <span className="small muted disabled-reason">{!format ? "Choose a format" : "Add a working title"}</span> : <span className="small faint"><span className="req">*</span> required</span>}
         </div>
       </form>
     </Modal>

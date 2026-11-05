@@ -84,23 +84,23 @@ export const ENTRIES: Entry[] = [
   },
   {
     id: "contract_suggest",
-    group: "Contract and research",
-    title: "Suggest the reader contract",
-    when: "On a piece's Contract step, in the conversation with the AI.",
+    group: "Scope and research",
+    title: "Suggest the scope",
+    when: "On a piece's Scope step, in the conversation with the AI.",
     tier: "reason",
-    receives: ["Brief", "Current contract", "Ideal customer profile", "Positioning", "Strategy notes", "The conversation"],
+    receives: ["Brief", "Current scope", "Ideal customer profile", "Positioning", "Strategy notes", "The conversation"],
     units: [
       { key: "contract.base", label: "Prompt", text: CONTRACT_SYSTEM },
-      { key: "contract.lite", label: "Added for short formats (lite contract)", text: CONTRACT_LITE },
+      { key: "contract.lite", label: "Added for short formats (short-format scope)", text: CONTRACT_LITE },
     ],
   },
   {
     id: "research_search",
-    group: "Contract and research",
+    group: "Scope and research",
     title: "Search the web for research",
     when: "On the Research step (piece and section), when you press Search.",
     tier: "research",
-    receives: ["Brief", "Reader contract", "Ideal customer profile (piece research)", "Outline and section (section research)"],
+    receives: ["Brief", "Scope", "Ideal customer profile (piece research)", "Outline and section (section research)"],
     units: [
       {
         key: "research.search",
@@ -117,11 +117,11 @@ export const ENTRIES: Entry[] = [
   },
   {
     id: "research_extract",
-    group: "Contract and research",
+    group: "Scope and research",
     title: "Pull findings from a source you add",
     when: "On the Research step, when you add links or pasted text, or reuse a library source.",
     tier: "research",
-    receives: ["Brief", "Reader contract", "Section (section research)", "The source text"],
+    receives: ["Brief", "Scope", "Section (section research)", "The source text"],
     units: [
       {
         key: "research.extract",
@@ -138,7 +138,7 @@ export const ENTRIES: Entry[] = [
     title: "Analyse the approved research",
     when: "Before the outline, once piece research is approved.",
     tier: "reason",
-    receives: ["Brief", "Reader contract", "Approved piece research"],
+    receives: ["Brief", "Scope", "Approved piece research"],
     units: [{
       key: "analysis",
       label: "Prompt",
@@ -152,7 +152,7 @@ export const ENTRIES: Entry[] = [
     title: "Suggest the outline",
     when: "On the Outline step, in the conversation with the AI.",
     tier: "reason",
-    receives: ["Brief", "Reader contract", "Analysis", "Approved piece research", "Format style profile", "The conversation"],
+    receives: ["Brief", "Scope", "Analysis", "Approved piece research", "Format style profile", "The conversation"],
     units: [{ key: "outline", label: "Prompt", text: OUTLINE_SYSTEM }],
   },
   {
@@ -197,7 +197,7 @@ export const ENTRIES: Entry[] = [
   {
     id: "contract_check",
     group: "Checks while writing",
-    title: "Check against the reader contract",
+    title: "Check against the scope",
     when: "After each section, and as the final check before sign-off.",
     tier: "reason",
     receives: ["The expectations owed", "Your text"],
@@ -209,7 +209,7 @@ export const ENTRIES: Entry[] = [
     title: "SEO and answer-engine (GEO) check",
     when: "On the outline and on the finished piece, where the format switches it on.",
     tier: "reason",
-    receives: ["Brief", "Reader contract", "Approved search-landscape findings", "The outline or the full piece"],
+    receives: ["Brief", "Scope", "Approved search-landscape findings", "The outline or the full piece"],
     units: [
       {
         key: "seo.base",
@@ -227,7 +227,7 @@ export const ENTRIES: Entry[] = [
     title: "Improve section structure",
     when: "On the Outline step, when you press Improve structure. It plans what goes under each heading; the writer edits it.",
     tier: "reason",
-    receives: ["Brief", "Reader contract", "Analysis", "Approved piece research", "Format style profile", "Approved search-landscape findings", "The outline"],
+    receives: ["Brief", "Scope", "Analysis", "Approved piece research", "Format style profile", "Approved search-landscape findings", "The outline"],
     units: [{ key: "structure", label: "Prompt", text: STRUCTURE_SYSTEM }],
   },
   {
@@ -236,7 +236,7 @@ export const ENTRIES: Entry[] = [
     title: "Fix SEO and GEO gaps with AI",
     when: "After an SEO/GEO check finds things to improve. On the outline it revises the plan; on the finished piece it proposes small edits you accept one by one.",
     tier: "reason",
-    receives: ["Brief", "Reader contract", "Approved search-landscape findings", "The gaps the check found", "The outline or the finished piece"],
+    receives: ["Brief", "Scope", "Approved search-landscape findings", "The gaps the check found", "The outline or the finished piece"],
     units: [
       { key: "seo_fix.outline", label: "Prompt for the outline", text: SEO_FIX_OUTLINE },
       { key: "seo_fix.final", label: "Prompt for the finished piece", text: SEO_FIX_FINAL },

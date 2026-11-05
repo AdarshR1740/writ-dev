@@ -300,7 +300,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
   const notCurrent = [
     recipe.checks.grammar && grammarState !== "current" ? "Grammar" : null,
     recipe.checks.fact && factState !== "current" ? "Facts" : null,
-    contractRuns && recipe.checks.contract && contractState !== "current" ? "Reader contract" : null,
+    contractRuns && recipe.checks.contract && contractState !== "current" ? "Scope" : null,
   ].filter(Boolean) as string[];
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const grammarFound = fixes?.length ?? section.grammar_check?.found ?? 0;
@@ -413,14 +413,14 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
 
             {recipe.checks.contract && recipe.contract.mode !== "off" && <div className="check">
               <div className="check-head">
-                <strong>Reader contract</strong>
+                <strong>Scope</strong>
                 <span className="small muted">Does this section deliver what it owes? No score.</span>
                 {section.expectation_ids.length > 0 && (
-                  <CheckStatus state={contractState} summary={contractOpen > 0 ? `${plural(contractOpen, "expectation", "expectations")} not fully met` : "everything it owes is met"} />
+                  <CheckStatus state={contractState} summary={contractOpen > 0 ? `${plural(contractOpen, "point", "points")} not fully covered` : "every point is covered"} />
                 )}
               </div>
-              <AiAction label="Check against contract" primary={false} disabled={!text.trim() || unsaved || section.expectation_ids.length === 0}
-                reason={section.expectation_ids.length === 0 ? "This section owes nothing in the contract" : !text.trim() ? "Write something first" : "Saving…"}
+              <AiAction label="Check against scope" primary={false} disabled={!text.trim() || unsaved || section.expectation_ids.length === 0}
+                reason={section.expectation_ids.length === 0 ? "No scope points are assigned to this section" : !text.trim() ? "Write something first" : "Saving…"}
                 payload={{ task: "contract_check", section_id: section.id }} onDone={onChanged} />
               {section.contract_check && <ContractResults results={section.contract_check.results} />}
             </div>}

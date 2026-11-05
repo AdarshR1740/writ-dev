@@ -168,7 +168,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                         <input type="checkbox" disabled={confirmed} checked={s.expectation_ids.includes(e.id)} onChange={(ev) => update(s.key, {
                           expectation_ids: ev.target.checked ? [...s.expectation_ids, e.id] : s.expectation_ids.filter((x) => x !== e.id),
                         })} />
-                        Expectation {n + 1}
+                        Point {n + 1}
                       </label>
                     ))}
                   </div>
@@ -255,7 +255,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
           <aside className="rail thread" aria-label="Conversation">
             <h3>Work it out with AI</h3>
             <div className="messages">
-              {messages.length === 0 && <p className="small muted">Ask for a first outline built from your contract and the reviewed research.</p>}
+              {messages.length === 0 && <p className="small muted">Ask for a first outline built from your scope and the reviewed research.</p>}
               {messages.map((m) => (
                 <div key={m.id} className={`msg ${m.role}`}>
                   <p>{m.content}</p>
@@ -374,11 +374,11 @@ function AnalysisPanel({ piece, onRan, onAnswer }: { piece: Piece; onRan: () => 
       )}
       {a?.contract_suggestions && a.contract_suggestions.length > 0 && (
         <div className="notice stack" style={{ gap: 6 }}>
-          <strong className="small">The research suggests changes to your reader contract</strong>
+          <strong className="small">The research suggests changes to your scope</strong>
           <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
             {a.contract_suggestions.map((c, i) => <li key={i}>{c.change} <span className="muted">({c.why})</span></li>)}
           </ul>
-          <span className="small muted">If you agree, edit the contract in step 1 and confirm it again before confirming the outline.</span>
+          <span className="small muted">If you agree, edit the scope in step 1 and confirm it again before confirming the outline.</span>
         </div>
       )}
     </section>

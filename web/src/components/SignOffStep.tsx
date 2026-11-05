@@ -136,7 +136,7 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
         {contractCheck && <section className="card stack">
           <div className="check-head">
             <strong>Final check</strong>
-            <span className="small muted">Does the whole piece deliver the reader contract? Sign-off needs it.</span>
+            <span className="small muted">Does the whole piece cover its scope? Sign-off needs it.</span>
           </div>
           <div className="row">
             {!done && (
