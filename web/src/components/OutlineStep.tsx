@@ -73,6 +73,8 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   const [actionError, setActionError] = useState<string | null>(null);
   const [answering, setAnswering] = useState<{ question: string } | null>(null);
   const [fixReply, setFixReply] = useState<string | null>(null);
+  // The outline as it was before "Fix now" changed it, so the change can be undone.
+  const [undo, setUndo] = useState<Draft[] | null>(null);
   const confirmed = Boolean(piece.outline_confirmed_at);
   const recipe = normalise(piece.recipe);
   const aiThread = recipe.outline.mode === "free" && recipe.outline.ai_thread;
@@ -104,14 +106,16 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
     }
   }
 
-  async function save() {
-    const clean = draft!.filter((s) => s.heading.trim()).map((s) => ({ heading: s.heading.trim(), purpose: s.purpose.trim(), expectation_ids: s.expectation_ids, structure: cleanBlocks(s.structure) }));
+  async function save(list: Draft[] = draft!) {
+    const clean = list.filter((s) => s.heading.trim()).map((s) => ({ id: s.key, heading: s.heading.trim(), purpose: s.purpose.trim(), expectation_ids: s.expectation_ids, structure: cleanBlocks(s.structure) }));
     const { error: err } = await supabase.rpc("save_outline", { target_piece: piece.id, sections: clean });
     if (err) throw err;
     setDraft(null);
     await reload();
   }
 
+  // A section the AI keeps under the same heading stays the same section, so its text and research are kept.
+  const keyFor = (heading: string) => draft.find((d) => d.heading.trim().toLowerCase() === heading.trim().toLowerCase())?.key ?? key();
   const update = (k: string, patch: Partial<Draft>) => setDraft(draft.map((s) => (s.key === k ? { ...s, ...patch } : s)));
   const move = (i: number, d: -1 | 1) => {
     const list = [...draft];
@@ -129,6 +133,18 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
             <strong>Outline</strong>
             {confirmed ? <span className="tag ok">Confirmed</span> : <span className="tag">Draft</span>}
             <span className="spacer" />
+            {confirmed && piece.stage === "writing" && recipe.outline.mode !== "off" && (
+              <button type="button" className="btn btn-small" disabled={busy} onClick={() => {
+                if (!window.confirm("Reopen the outline for editing?\n\nSections you have already written keep their text. Writing pauses until you confirm the outline again. Sections you remove lose their text.")) return;
+                void act(async () => {
+                  const { error: err } = await supabase.rpc("reopen_outline", { target_piece: piece.id });
+                  if (err) throw err;
+                  setUndo(null);
+                  setFixReply(null);
+                  onChanged();
+                });
+              }}>Reopen outline</button>
+            )}
             {!confirmed && dirty && <button type="button" className="btn btn-small" disabled={busy} onClick={() => act(save)}>Save</button>}
           </header>
           <div className="stack" style={{ padding: "18px 20px 22px" }}>
@@ -199,6 +215,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                         const blocks = r.sections.find((x) => x.position === i + 1)?.blocks;
                         return blocks?.length ? { ...s, structure: blocks } : s;
                       }));
+                      setUndo(null);
                       setFixReply("Structure suggested for every section. Review the blocks, edit what you like, then save.");
                     }}
                   />
@@ -206,7 +223,12 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                 </div>
               </div>
             )}
-            {fixReply && <p className="notice small">{fixReply}</p>}
+            {fixReply && (
+              <p className="notice small row">
+                <span>{fixReply}</span>
+                {undo && <button type="button" className="btn btn-small" disabled={busy} onClick={() => act(async () => { await save(undo); setUndo(null); setFixReply("Reverted to your previous outline."); })}>Undo</button>}
+              </p>
+            )}
             {uncovered.length > 0 && draft.length > 0 && (
               <p className="notice small">
                 Not covered by any section: {uncovered.map((e) => `"${e.text}"`).join("; ")}
@@ -242,7 +264,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                       <summary className="small">Suggested outline ({m.payload.sections.length} sections)</summary>
                       <ol className="small">{m.payload.sections.map((s, i) => <li key={i}><strong>{s.heading}</strong>: {s.purpose}</li>)}</ol>
                       <button type="button" className="btn btn-small" onClick={() => setDraft(m.payload!.sections!.map((s) => ({
-                        key: key(),
+                        key: keyFor(s.heading),
                         heading: s.heading,
                         purpose: s.purpose,
                         expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
@@ -272,15 +294,22 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
       </div>
 
       {recipe.outline.seo_geo_check && <SeoGeoPanel piece={piece} scope="outline" result={piece.seo_geo_outline} disabled={dirty || data.sections.length === 0} reason={dirty ? "Save your edits first" : "Add sections first"} onDone={onChanged}
-        onFixOutline={confirmed ? undefined : (fix) => {
-          setDraft(fix.sections.map((s) => ({
-            key: key(),
+        fixBlocked={confirmed ? "The outline is confirmed, so it can't be changed here." : undefined}
+        onFixOutline={(fix) => {
+          const before = draft;
+          const next: Draft[] = fix.sections.map((s) => ({
+            key: keyFor(s.heading),
             heading: s.heading,
             purpose: s.purpose,
             expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
             structure: s.blocks,
-          })));
-          setFixReply(`${fix.reply} This is a proposal: review the outline above, then save it and run the check again.`);
+          }));
+          // Apply and save in one step; the previous outline is kept so it can be undone.
+          void act(async () => {
+            await save(next);
+            setUndo(before);
+            setFixReply(`${fix.reply} The outline is updated. Run the check again to see what is left.`);
+          });
         }} />}
 
       {answering && (

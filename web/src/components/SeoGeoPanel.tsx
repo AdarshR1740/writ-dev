@@ -28,7 +28,7 @@ interface TextEdit {
 }
 
 /** SEO and GEO as a checklist with evidence and fixes. No score to chase. */
-export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, onFixOutline, onEdited }: {
+export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, onFixOutline, fixBlocked, onEdited }: {
   piece: Piece;
   scope: "outline" | "final";
   result: SeoGeoResult | null;
@@ -37,6 +37,8 @@ export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, on
   onDone: () => void;
   /** Outline scope: receives the AI's revised outline. */
   onFixOutline?: (fix: OutlineFix) => void;
+  /** Why "Fix now" can't be used right now (for example, the outline is confirmed). */
+  fixBlocked?: string;
   /** Final scope: called after an edit was applied to a section's text. */
   onEdited?: () => void;
 }) {
@@ -57,6 +59,25 @@ export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, on
     } finally {
       setBusy(false);
     }
+  }
+
+  async function acceptAll() {
+    for (const e of edits?.list ?? []) {
+      // Stop at the first failure so the rest stay listed.
+      setBusy(true);
+      setError(null);
+      try {
+        await callFunction("ai", { task: "seo_fix_apply", section_id: e.section_id, where: e.where, original: e.original, replacement: e.replacement, check: e.check });
+        setEdits((cur) => cur && { ...cur, list: cur.list.filter((x) => x !== e) });
+      } catch (err) {
+        setError(errorMessage(err));
+        setBusy(false);
+        onEdited?.();
+        return;
+      }
+    }
+    setBusy(false);
+    onEdited?.();
   }
 
   return (
@@ -81,11 +102,11 @@ export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, on
             <p className="small faint">Checked {formatDate(result.checked_at)} · {improve ? `${improve} to improve` : "nothing to improve"}</p>
             <span className="spacer" />
             {improve > 0 && scope === "outline" && onFixOutline && (
-              <AiAction<OutlineFix> label="Fix with AI" primary={false} disabled={disabled} reason={reason}
+              <AiAction<OutlineFix> label="Fix now" primary disabled={disabled || Boolean(fixBlocked)} reason={fixBlocked ?? reason}
                 payload={{ task: "seo_fix", piece_id: piece.id, scope }} onDone={onFixOutline} />
             )}
             {improve > 0 && scope === "final" && (
-              <AiAction<{ reply: string; edits: TextEdit[] }> label="Suggest edits with AI" primary={false} disabled={disabled} reason={reason}
+              <AiAction<{ reply: string; edits: TextEdit[] }> label="Fix now" primary disabled={disabled} reason={reason}
                 payload={{ task: "seo_fix", piece_id: piece.id, scope }} onDone={(r) => { setError(null); setEdits({ reply: r.reply, list: r.edits }); }} />
             )}
           </div>
@@ -93,6 +114,9 @@ export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, on
             <div className="notice stack" style={{ gap: 8 }}>
               <p className="small">{edits.reply || "Suggested edits."} Nothing changes until you accept an edit. Accepted text is recorded in the editorial record as an AI-suggested edit.</p>
               {edits.list.length === 0 && <p className="small muted">No edit to accept. Some gaps can't be fixed by changing the text.</p>}
+              {edits.list.length > 1 && (
+                <div><button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={acceptAll}>Accept all {edits.list.length} edits</button></div>
+              )}
               <ul className="fixes">
                 {edits.list.map((e, i) => (
                   <li key={i}>

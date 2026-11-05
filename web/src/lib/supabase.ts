@@ -14,6 +14,10 @@ export async function callFunction<T>(name: string, body: Record<string, unknown
   const { data, error } = await supabase.functions.invoke(name, { body });
   if (error) {
     let message = error.message;
+    // The browser got no response at all: offline, the function was being redeployed, or the run took too long.
+    if (/failed to send a request|failed to fetch/i.test(message)) {
+      message = "Couldn't reach the server, so nothing was saved by this step. This usually passes: wait a few seconds and try again. If it keeps happening on the same piece, the run may be taking too long.";
+    }
     const ctx = (error as { context?: Response }).context;
     if (ctx && typeof ctx.json === "function") {
       const payload = await ctx.json().catch(() => null);

@@ -767,3 +767,12 @@ Instagram caption, Instagram carousel, LinkedIn carousel, X thread, video script
   stale (§22). Accepting is disabled once the piece is signed off.
 - **Known limit:** the export renders paragraphs, subheads and bullet lists; a markdown table from a drafted section
   is exported as plain text.
+
+### 23.1 Reopening a confirmed outline (user request)
+
+- A piece in the writing stage can take its outline back to editing ("Reopen outline" on the Outline step). The
+  stage returns to Outline, writing pauses, and the outline must be confirmed again. The event is recorded as
+  `outline_reopened`.
+- To make that safe, saving the outline no longer replaces every section. Sections are matched by id, so text,
+  briefs and research of sections that stay are kept; new sections are added; sections left out are removed with
+  their text. The AI's outline suggestions reuse a section when the heading is unchanged.
