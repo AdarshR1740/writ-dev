@@ -5,7 +5,7 @@
 
 import { admin } from "../_shared/supabase.ts";
 import { consolidateTemplate, CONTRACT_LITE, CONTRACT_SYSTEM, EXTRACT_SYSTEM } from "./prompts.ts";
-import { CHAT_OUTLINE, CHAT_SCOPE } from "./chatengine.ts";
+import { WEB_LOOKUP_SYSTEM } from "./chat.ts";
 import {
   ANALYSIS_SYSTEM,
   BRIEF_SHORT,
@@ -92,8 +92,7 @@ export const ENTRIES: Entry[] = [
     receives: ["Brief", "Current scope", "Ideal customer profile", "Positioning", "Strategy notes", "The conversation"],
     units: [
       { key: "contract.base", label: "Prompt", text: CONTRACT_SYSTEM },
-      { key: "chat.scope", label: "The conversation on the Scope step", text: CHAT_SCOPE, hint: "Used by Ask AI on the Scope step. The AI searches the web by itself when it needs to. Needs an Anthropic key." },
-      { key: "chat.outline", label: "The conversation on the Outline step", text: CHAT_OUTLINE, hint: "Used by Ask AI on the Outline step." },
+      { key: "chat.web", label: "Web lookup in the conversation (scope and outline)", text: WEB_LOOKUP_SYSTEM, hint: "Runs when \"Search the web\" is ticked or the writer asks for a search in words. Needs an Anthropic or OpenAI key." },
       { key: "contract.lite", label: "Added for short formats (short-format scope)", text: CONTRACT_LITE },
     ],
   },

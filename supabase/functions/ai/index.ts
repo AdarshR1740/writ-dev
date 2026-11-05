@@ -31,7 +31,6 @@ import { MEMORY_TASKS } from "./memory.ts";
 import { promptCatalog } from "./catalog.ts";
 import { promptSet } from "../_shared/prompt-overrides.ts";
 import { describeThread, type ThreadRow, wantsWeb, webBlock, webLookup } from "./chat.ts";
-import { chatStream } from "./chatengine.ts";
 
 async function prepareConsolidate(userId: string, body: Record<string, unknown>): Promise<Prepared> {
   const documentId = String(body.document_id ?? "");
@@ -214,8 +213,6 @@ Deno.serve(handle(async (req) => {
     await requireRole(user.id, String(body.company_id ?? ""), "member");
     return json({ prompts: await promptCatalog(String(body.company_id)) });
   }
-  // The scope and outline conversations: free-text replies streamed live, web search chosen by the model.
-  if (body.task === "chat") return await chatStream(user.id, body);
   // Applies one accepted SEO/GEO edit to a section. No model call, no cost.
   if (body.task === "seo_fix_apply") return json(await applySeoFix(user.id, body));
   const prepare = TASKS[String(body.task ?? "")];

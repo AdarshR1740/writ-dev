@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ThreadMessage } from "../lib/types";
-import { errorMessage } from "../lib/supabase";
-import { streamChat } from "../lib/chatStream";
+import { callFunction, errorMessage } from "../lib/supabase";
 import { CleanTextarea, ErrorText } from "./ui";
 import { RichText } from "./RichText";
 
@@ -23,19 +22,13 @@ function CopyAction({ text }: { text: string }) {
   );
 }
 
-interface Live {
-  /** What the writer just sent, shown while the reply is on its way. */
-  message: string | null;
-  text: string;
-  status: string | null;
-  suggestion: NonNullable<ThreadMessage["payload"]> | null;
-}
+const TASKS = { scope: "contract_suggest", outline: "outline_suggest" } as const;
 
 /**
- * A chat the way chat apps work: replies appear as they are written, the newest message is always in view, the
- * box to type in stays pinned at the bottom, Enter sends (Shift+Enter makes a new line), and each AI reply can
- * be copied or, for the latest, answered again. The AI searches the web by itself when it needs to; a reply
- * that did lists the pages it used.
+ * A simple chat: the newest message is always in view, the box to type in stays pinned at the bottom, Enter
+ * sends (Shift+Enter makes a new line), and each AI reply can be copied or, for the latest, answered again.
+ * Tick "Search the web" (or ask for a search in words) and the AI looks things up first; a reply that did lists
+ * the pages it used.
  */
 export function ChatPanel({ kind, pieceId, messages, placeholder, beforeSend, onSent, onMinimize, renderExtra, copyText }: {
   /** Which conversation: the scope or the outline. */
@@ -54,56 +47,42 @@ export function ChatPanel({ kind, pieceId, messages, placeholder, beforeSend, on
   copyText: (m: ThreadMessage) => string;
 }) {
   const [text, setText] = useState("");
-  const [live, setLive] = useState<Live | null>(null);
+  const [sending, setSending] = useState<{ message: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [web, setWeb] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
-  const abort = useRef<AbortController | null>(null);
   const lastAi = [...messages].reverse().find((m) => m.role === "ai");
   const lastIsAi = messages.length > 0 && messages[messages.length - 1].role === "ai";
 
-  // Newest message in view, on open and as the reply grows.
+  // Newest message in view, on open and whenever something arrives.
   useEffect(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, live?.text, live?.status, live?.suggestion]);
-
-  useEffect(() => () => abort.current?.abort(), []);
+  }, [messages.length, sending]);
 
   async function run(message: string | null) {
     setError(null);
-    const controller = new AbortController();
-    abort.current = controller;
-    setLive({ message: message || null, text: "", status: null, suggestion: null });
+    setSending({ message: message || null });
     try {
       await beforeSend?.();
-      await streamChat(
-        { piece_id: pieceId, kind, ...(message === null ? { retry: true } : { message }) },
-        {
-          onDelta: (t) => setLive((l) => l && { ...l, text: l.text + t, status: null }),
-          onStatus: (s) => setLive((l) => l && { ...l, status: s }),
-          onSuggestion: (s) => setLive((l) => l && { ...l, suggestion: s }),
-        },
-        controller.signal,
-      );
+      await callFunction("ai", {
+        task: TASKS[kind],
+        piece_id: pieceId,
+        ...(web ? { web: true } : {}),
+        ...(message === null ? { retry: true } : { message }),
+      });
       if (message !== null) setText("");
       await onSent();
     } catch (err) {
-      if (!controller.signal.aborted) {
-        setError(errorMessage(err));
-        // A reply that failed part-way may still have saved the writer's message.
-        await onSent().catch(() => undefined);
-      }
+      setError(errorMessage(err));
+      // A send that failed part-way may still have saved the writer's message.
+      await onSent().catch(() => undefined);
     } finally {
-      setLive(null);
-      abort.current = null;
+      setSending(null);
     }
   }
 
-  const sending = live !== null;
   const send = () => { if (!sending) void run(text.trim()); };
-  const liveMessage: ThreadMessage | null = live?.suggestion
-    ? { id: "live", role: "ai", content: live.text, payload: live.suggestion, created_at: "" }
-    : null;
 
   return (
     <aside className="rail thread chat" aria-label="Conversation">
@@ -114,7 +93,7 @@ export function ChatPanel({ kind, pieceId, messages, placeholder, beforeSend, on
       </div>
       <div className="messages" ref={scroller} role="log" aria-live="polite">
         {messages.length === 0 && !sending && (
-          <p className="small muted">Ask for a first suggestion, or chat about anything. The AI searches the web by itself when it needs to. Every turn is kept here.</p>
+          <p className="small muted">Ask for a first suggestion, or describe what the piece must do. Tick "Search the web" and the AI looks things up before it answers. Every turn is kept here.</p>
         )}
         {messages.map((m) => (
           <div key={m.id} className={`msg ${m.role}`}>
@@ -131,22 +110,17 @@ export function ChatPanel({ kind, pieceId, messages, placeholder, beforeSend, on
               <div className="chat-actions">
                 <CopyAction text={copyText(m)} />
                 {m.id === lastAi?.id && lastIsAi && (
-                  <button type="button" className="chat-act" disabled={sending} onClick={() => void run(null)}>Retry</button>
+                  <button type="button" className="chat-act" disabled={Boolean(sending)} onClick={() => void run(null)}>Retry</button>
                 )}
               </div>
             )}
           </div>
         ))}
-        {live?.message && (
-          <div className="msg writer"><span className="msg-who">You</span><p style={{ whiteSpace: "pre-wrap" }}>{live.message}</p></div>
+        {sending?.message && (
+          <div className="msg writer"><span className="msg-who">You</span><p style={{ whiteSpace: "pre-wrap" }}>{sending.message}</p></div>
         )}
-        {live && (
-          <div className="msg ai">
-            <span className="msg-who">Writ AI</span>
-            {live.text ? <RichText text={live.text} /> : !live.status && <p className="muted">Thinking…</p>}
-            {live.status && <p className="chat-status">{live.status}</p>}
-            {liveMessage && renderExtra(liveMessage)}
-          </div>
+        {sending && (
+          <div className="msg ai"><span className="msg-who">Writ AI</span><p className="muted">{web ? "Searching the web and working…" : "Working…"}</p></div>
         )}
       </div>
       <ErrorText>{error}</ErrorText>
@@ -160,10 +134,12 @@ export function ChatPanel({ kind, pieceId, messages, placeholder, beforeSend, on
           aria-label="Message"
         />
         <div className="row">
-          <span className="small faint">Enter to send · Shift+Enter for a new line</span>
+          <label className="check-label small" title="The AI looks things up online before it answers. Costs a little more. Needs an Anthropic or OpenAI key.">
+            <input type="checkbox" checked={web} onChange={(e) => setWeb(e.target.checked)} /> Search the web
+          </label>
+          <span className="small faint">Enter to send</span>
           <span className="spacer" />
-          {sending && <button type="button" className="btn" onClick={() => abort.current?.abort()}>Stop</button>}
-          <button type="button" className="btn btn-primary" disabled={sending || (!text.trim() && messages.length > 0)} onClick={send}>
+          <button type="button" className="btn btn-primary" disabled={Boolean(sending) || (!text.trim() && messages.length > 0)} onClick={send}>
             {sending ? "Working…" : messages.length === 0 && !text.trim() ? "Suggest" : "Send"}
           </button>
         </div>

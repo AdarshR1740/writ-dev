@@ -809,3 +809,11 @@ Instagram caption, Instagram carousel, LinkedIn carousel, X thread, video script
   (`contract_suggest`, `outline_suggest`) remain on the server but the screens no longer call them.
 - **Cost:** search is billed per search and the longer history costs tokens. Both are recorded as usage
   (`chat_scope`, `chat_outline`) and count against the budget.
+
+### 24.2 Back to the simple conversation (supersedes 24.1)
+
+- The streaming, model-driven chat only worked with Anthropic and produced an empty reply once, so the screens use
+  the earlier single-request conversation again: any provider can suggest a scope or an outline; "Search the web"
+  (a tick, or a search asked for in words) runs a lookup first on an Anthropic or OpenAI key; Copy, Retry, the
+  pinned box and formatted replies stay. Reliability was chosen over live streaming. The 24.1 design is in git
+  history (commit b849579) if it is wanted again.
