@@ -205,6 +205,8 @@ export interface ThreadMessage {
     core_question?: string;
     expectations?: string[];
     sections?: { heading: string; purpose: string; expectations: number[] }[];
+    /** What a web lookup found for this reply, and the pages it came from. */
+    web?: { findings?: string; sources: { url: string; title: string }[] };
   } | null;
   created_at: string;
 }

@@ -20,6 +20,7 @@ import {
 } from "../_shared/context.ts";
 import type { Prepared } from "./prepared.ts";
 import { promptSet } from "../_shared/prompt-overrides.ts";
+import { describeThread, type ThreadRow, wantsWeb, webBlock, webLookup } from "./chat.ts";
 
 const str = { type: "string" };
 const obj = (properties: Record<string, unknown>): JsonSchema => ({
@@ -52,7 +53,9 @@ function task<T>(
   user: string,
   schema: JsonSchema,
   expectedOutputTokens: number,
-  after: (data: T, cost: number | null, model: string) => Promise<unknown>,
+  after: (data: T, cost: number | null, model: string, extra?: unknown) => Promise<unknown>,
+  /** Runs first, when the task runs: may add to the model's input and hand something to `after`. */
+  before?: () => Promise<{ userSuffix: string; extra: unknown }>,
 ): Prepared {
   return {
     companyId: piece.company_id,
@@ -61,9 +64,12 @@ function task<T>(
     user,
     expectedOutputTokens,
     run: async () => {
-      const r = await runModel<T>(piece.company_id, { taskType, system, user, schema, schemaName: name, maxTokens: 16000 });
+      const pre = before ? await before() : null;
+      const r = await runModel<T>(piece.company_id, {
+        taskType, system, user: user + (pre?.userSuffix ?? ""), schema, schemaName: name, maxTokens: 16000,
+      });
       await recordUsage(piece.company_id, userId, name, taskType, r, piece.id);
-      return after(r.data, r.costUsd, r.model);
+      return after(r.data, r.costUsd, r.model, pre?.extra);
     },
   };
 }
@@ -137,7 +143,8 @@ WHAT YOU RECEIVE
 - <analysis>: tensions, company insights and gaps found in the research.
 - <approved_research>: numbered items.
 - <format_profile> (sometimes): how pieces in this format are usually organised.
-- <current_outline> and <conversation>: the outline now, and what the writer and you have said.
+- <current_outline> and <conversation>: the outline now, and what the writer and you have said, including earlier suggestions and anything found on the web.
+- <web_findings> (sometimes): what a web lookup found for the writer's last message.
 
 STEPS
 1. Choose the shape from the reader's intent:
@@ -153,6 +160,8 @@ RULES
 - Headings are specific to the sub-topic. Never use "Introduction", "Overview" or "Conclusion".
 - Use the format profile only for structure (how pieces open and are organised), not for wording.
 - Don't plan word counts.
+- Use <web_findings> when they are given, and name the sites in plain words in "reply". Never state a fact from the web that is not in them. If the writer asked you to look something up and there are no findings, say the lookup did not run and ask them to tick "Search the web" under the message box and send it again. Do not pretend the web is unavailable.
+- Build on earlier suggestions and the writer's changes instead of starting over.
 
 OUTPUT (both fields are required)
 - reply: 1 to 3 sentences to the writer: what you changed and why, or one question.
@@ -176,16 +185,22 @@ async function prepareOutline(userId: string, body: Record<string, unknown>): Pr
   const piece = await pieceFor(userId, body);
   requireStep(piece, setting<string>(piece, "outline.mode") === "free" && on(piece, "outline.ai_thread"), "Outline suggestions");
   if (piece.stage !== "outline") throw new UserError("The outline can be suggested once research is finished.");
-  const message = String(body.message ?? "").trim();
+  const retry = body.retry === true;
+  const message = retry ? "" : String(body.message ?? "").trim();
   const thread = await threadId(piece, "outline");
-  const { data: history } = await admin.from("thread_messages").select("role, content").eq("thread_id", thread)
+  const { data: all } = await admin.from("thread_messages").select("id, role, content, payload").eq("thread_id", thread)
     .order("created_at");
+  // Retrying drops the last AI reply and answers the writer's last message again.
+  const lastAi = retry && all?.length && all[all.length - 1].role === "ai" ? all[all.length - 1] : null;
+  const history = ((lastAi ? all!.slice(0, -1) : all) ?? []) as ThreadRow[];
+  const askedFor = message || (retry ? [...history].reverse().find((m) => m.role === "writer")?.content ?? "" : "");
+  // A lookup runs when the writer ticked "Search the web", asked for one in words, or the reply being retried had one.
+  const lookup = askedFor !== "" && (body.web === true || wantsWeb(askedFor) || Boolean((lastAi?.payload as { web?: unknown } | null)?.web));
   const { data: current } = await admin.from("piece_sections").select("position, heading, purpose").eq("piece_id", piece.id)
     .order("position");
   // Wiring: brief, contract, analysis, approved research, format profile. No core voice or memory.
   const context = await contextFor(piece, ["brief", "contract", "analysis", "piece_items", "format_profile"]);
-  const convo = [...(history ?? []), ...(message ? [{ role: "writer", content: message }] : [])]
-    .map((m) => `<${m.role}>\n${m.content}\n</${m.role}>`).join("\n");
+  const convo = describeThread(history, message ? { role: "writer", content: message } : undefined);
   const user = `${context}
 
 <current_outline>
@@ -197,17 +212,26 @@ ${convo || "(No messages yet. Suggest a first outline.)"}
 </conversation>`;
   return task<{ reply: string; sections: { heading: string; purpose: string; expectations: number[] }[] }>(
     "outline_suggest", "reason", piece, userId, (await promptSet(piece.company_id))("outline", OUTLINE_SYSTEM), user, outlineSchema, 2000,
-    async (data, cost, model) => {
+    async (data, cost, model, found) => {
+      if (lastAi) await admin.from("thread_messages").delete().eq("id", lastAi.id);
       if (message) {
         await admin.from("thread_messages").insert({ company_id: piece.company_id, thread_id: thread, role: "writer", content: message, created_by: userId });
       }
       const { data: msg, error } = await admin.from("thread_messages").insert({
-        company_id: piece.company_id, thread_id: thread, role: "ai", content: data.reply, payload: { sections: data.sections },
+        company_id: piece.company_id, thread_id: thread, role: "ai", content: data.reply,
+        payload: { sections: data.sections, ...(found ? { web: found } : {}) },
       }).select().single();
       if (error) throw error;
       await logEvent(piece, userId, "outline_suggested");
       return { message: msg, cost_usd: cost, model };
     },
+    // Looked up only when the writer asks for it; what it finds is kept with the reply and carried forward.
+    lookup
+      ? async () => {
+        const found = await webLookup(piece, userId, askedFor, piece.topic || piece.title, convo);
+        return { userSuffix: `\n\n${webBlock(found)}`, extra: found };
+      }
+      : undefined,
   );
 }
 

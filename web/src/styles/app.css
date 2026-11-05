@@ -643,18 +643,21 @@ ol.expectations li::before {
 ol.expectations li > * { grid-column: 2; }
 ol.expectations li textarea { min-height: 56px; font: 15px/1.5 var(--font-doc); }
 
-.thread .messages {
-  display: grid;
-  gap: 10px;
-  max-height: 52vh;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-.msg { padding: 10px 12px; border-radius: 8px; font-size: 14px; display: grid; gap: 6px; }
-.msg.writer { background: var(--sunken); justify-self: end; max-width: 90%; }
-.msg.ai { background: var(--surface); border: 1px solid var(--rule); }
-.msg details summary { cursor: pointer; color: var(--pencil); }
-.msg ol { margin: 4px 0 8px; padding-left: 18px; }
+/* Conversation with the AI: wider rail, who-said-what labels, readable line length */
+.workbench:has(.thread) { grid-template-columns: minmax(0, 1fr) 380px; }
+@media (max-width: 1100px) { .workbench:has(.thread) { grid-template-columns: 1fr; } }
+.thread { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; gap: 14px; }
+.thread .messages { display: grid; gap: 14px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }
+.msg { padding: 12px 14px; border-radius: 10px; font-size: 14.5px; line-height: 1.6; display: grid; gap: 8px; }
+.msg p { margin: 0; }
+.msg-who { font-size: 11.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.msg.writer { background: var(--sunken); justify-self: end; width: 92%; }
+.msg.ai { background: var(--paper); border: 1px solid var(--rule); }
+.msg details { margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.msg details summary { cursor: pointer; color: var(--pencil); font-weight: 600; }
+.msg details[open] summary { margin-bottom: 8px; }
+.msg ol { margin: 4px 0 10px; padding-left: 20px; display: grid; gap: 6px; }
+.thread textarea { min-height: 84px; }
 
 .gate {
   display: flex;
@@ -1045,3 +1048,30 @@ ol.structure-list li { display: grid; grid-template-columns: 11rem 1fr auto; gap
 .fp-name { font-weight: 600; font-size: 14px; }
 .fp-desc { font-size: 12.5px; color: var(--muted); line-height: 1.35; }
 .piece-form .field-row.field-top { align-items: start; } .piece-form .field-row.field-top > span { padding-top: 8px; }
+
+/* The AI conversation can take over the step: the form shrinks to a compact bar above it. */
+.workbench.chat-open, .workbench:has(.thread).chat-open { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.workbench.chat-open .thread { max-width: 880px; width: 100%; justify-self: center; }
+.workbench.chat-open .thread .messages { max-height: 62vh; }
+.scope-bar { display: flex; align-items: center; gap: 16px; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 16px; }
+.scope-bar > .stack { flex: 1; }
+.scope-bar .btn { flex: none; }
+.thread > .btn { justify-self: start; }
+.workbench.no-rail { grid-template-columns: minmax(0, 1fr); }
+
+/* Chat: newest message in view, the box to type in stays pinned at the bottom. */
+.workbench.chat-open .thread.chat { display: flex; flex-direction: column; gap: 12px; }
+/* Always at least 380px of messages, taller when the screen allows; the page scrolls rather than squeezing the chat. */
+.thread.chat .messages { flex: none; min-height: 380px; max-height: max(380px, calc(100vh - 380px)); overflow-y: auto; align-content: start; }
+.chat-composer { display: grid; gap: 8px; border-top: 1px solid var(--rule); padding: 12px 0 2px; position: sticky; bottom: 0; background: var(--surface); z-index: 2; }
+.chat-composer textarea { min-height: 72px; resize: none; }
+.chat-actions { display: flex; gap: 14px; }
+.chat-act { border: 0; background: none; padding: 0; color: var(--muted); font: 500 12.5px var(--font-ui); cursor: pointer; }
+.chat-act:hover:not(:disabled) { color: var(--ink); text-decoration: underline; }
+.chat-act:disabled { opacity: 0.5; cursor: default; }
+.chat-sources ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.chat-sources a { overflow-wrap: anywhere; }
+.chat-status { margin: 0; font-size: 13px; color: var(--pencil); }
+.rich { display: grid; gap: 8px; }
+.rich p { margin: 0; }
+.chat-list { margin: 0; padding-left: 20px; display: grid; gap: 4px; }

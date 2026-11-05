@@ -30,6 +30,8 @@ import { applySeoFix, WRITING_TASKS } from "./writing.ts";
 import { MEMORY_TASKS } from "./memory.ts";
 import { promptCatalog } from "./catalog.ts";
 import { promptSet } from "../_shared/prompt-overrides.ts";
+import { describeThread, type ThreadRow, wantsWeb, webBlock, webLookup } from "./chat.ts";
+import { chatStream } from "./chatengine.ts";
 
 async function prepareConsolidate(userId: string, body: Record<string, unknown>): Promise<Prepared> {
   const documentId = String(body.document_id ?? "");
@@ -136,15 +138,21 @@ async function prepareContract(userId: string, body: Record<string, unknown>): P
   await requireRole(userId, piece.company_id, "member");
   const mode = setting<string>(piece, "contract.mode");
   requireStep(piece, mode !== "off" && setting<boolean>(piece, "contract.ai_thread"), "The contract conversation");
-  const message = String(body.message ?? "").trim();
+  const retry = body.retry === true;
+  const message = retry ? "" : String(body.message ?? "").trim();
   const { data: thread } = await admin.from("threads").select("id").eq("piece_id", piece.id).eq("subject", "contract")
     .single();
-  const { data: history } = await admin.from("thread_messages").select("role, content").eq("thread_id", thread!.id)
+  const { data: all } = await admin.from("thread_messages").select("id, role, content, payload").eq("thread_id", thread!.id)
     .order("created_at");
+  // Retrying drops the last AI reply and answers the writer's last message again.
+  const lastAi = retry && all?.length && all[all.length - 1].role === "ai" ? all[all.length - 1] : null;
+  const history = ((lastAi ? all!.slice(0, -1) : all) ?? []) as ThreadRow[];
+  const askedFor = message || (retry ? [...history].reverse().find((m) => m.role === "writer")?.content ?? "" : "");
+  // A lookup runs when the writer ticked "Search the web", asked for one in words, or the reply being retried had one.
+  const lookup = askedFor !== "" && (body.web === true || wantsWeb(askedFor) || Boolean((lastAi?.payload as { web?: unknown } | null)?.web));
   // Wiring: the contract stage gets the brief, the current contract and strategy. No voice or memory.
   const context = await contextFor(piece, ["brief", "contract", "icp", "positioning", "strategy_notes"]);
-  const conversation = [...(history ?? []), ...(message ? [{ role: "writer", content: message }] : [])]
-    .map((m) => `<${m.role}>\n${m.content}\n</${m.role}>`).join("\n");
+  const conversation = describeThread(history, message ? { role: "writer", content: message } : undefined);
   const user = `${context}\n\n<conversation>\n${conversation || "(The writer hasn't said anything yet. Suggest a first contract.)"}\n</conversation>`;
   const taskType: TaskType = "reason";
   const prompts = await promptSet(piece.company_id);
@@ -158,16 +166,19 @@ async function prepareContract(userId: string, body: Record<string, unknown>): P
     user,
     expectedOutputTokens: 1200,
     run: async () => {
+      if (lastAi) await admin.from("thread_messages").delete().eq("id", lastAi.id);
       if (message) {
         const { error } = await admin.from("thread_messages").insert({
           company_id: piece.company_id, thread_id: thread!.id, role: "writer", content: message, created_by: userId,
         });
         if (error) throw error;
       }
+      // Looked up only when the writer asks for it; what it finds is kept with the reply and carried forward.
+      const found = lookup ? await webLookup(piece, userId, askedFor, piece.topic || piece.title, conversation) : null;
       const r = await runModel<{ reply: string; core_question: string; expectations: string[] }>(piece.company_id, {
         taskType,
         system,
-        user,
+        user: lookup ? `${user}\n\n${webBlock(found)}` : user,
         schema: contractSchema,
         schemaName: "reader_contract",
         maxTokens: 8000,
@@ -178,7 +189,7 @@ async function prepareContract(userId: string, body: Record<string, unknown>): P
         thread_id: thread!.id,
         role: "ai",
         content: r.data.reply,
-        payload: { core_question: r.data.core_question, expectations: r.data.expectations },
+        payload: { core_question: r.data.core_question, expectations: r.data.expectations, ...(found ? { web: found } : {}) },
       }).select().single();
       if (error) throw error;
       await logEvent(piece, userId, "contract_suggested", { message: aiMessage.id });
@@ -203,6 +214,8 @@ Deno.serve(handle(async (req) => {
     await requireRole(user.id, String(body.company_id ?? ""), "member");
     return json({ prompts: await promptCatalog(String(body.company_id)) });
   }
+  // The scope and outline conversations: free-text replies streamed live, web search chosen by the model.
+  if (body.task === "chat") return await chatStream(user.id, body);
   // Applies one accepted SEO/GEO edit to a section. No model call, no cost.
   if (body.task === "seo_fix_apply") return json(await applySeoFix(user.id, body));
   const prepare = TASKS[String(body.task ?? "")];

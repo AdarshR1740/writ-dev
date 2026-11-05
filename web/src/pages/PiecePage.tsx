@@ -4,7 +4,8 @@ import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
 import { STAGES, type Contract, type Expectation, type Piece, type Stage, type ThreadMessage } from "../lib/types";
-import { AiAction, ErrorText, Loading, CleanTextarea } from "../components/ui";
+import { ErrorText, Loading, CleanTextarea } from "../components/ui";
+import { ChatPanel } from "../components/ChatPanel";
 import { ResearchStep } from "../components/ResearchStep";
 import { normalise, stagesFor, type Recipe } from "../lib/recipes";
 import { LineagePanel, ReviewDue, ReviseDialog } from "../components/PieceHistory";
@@ -110,7 +111,7 @@ function newId() {
 function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Recipe; onAdvanced: () => void }) {
   const lite = recipe.contract.mode === "lite";
   const maxExpectations = lite ? 2 : 7;
-  const { data, error, reload, setData } = useLoad(async () => {
+  const { data, error, reload } = useLoad(async () => {
     const [contract, thread] = await Promise.all([
       supabase.from("piece_contracts").select("*").eq("piece_id", piece.id).single().then(must<Contract>),
       supabase.from("threads").select("id").eq("piece_id", piece.id).eq("subject", "contract").single()
@@ -123,10 +124,11 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
   }, [piece.id]);
 
   const [draft, setDraft] = useState<{ core_question: string; expectations: Expectation[] } | null>(null);
-  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
+  // The conversation can take over the screen; the scope then shows as a compact bar.
+  const [chatOpen, setChatOpen] = useState(false);
 
   useEffect(() => {
     if (data && !draft) setDraft({ core_question: data.contract.core_question, expectations: data.contract.expectations });
@@ -167,13 +169,24 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
   };
 
   return (
-    <div className="workbench">
+    <div className={`workbench${chatOpen && recipe.contract.ai_thread ? " chat-open" : " no-rail"}`}>
+      {chatOpen ? (
+        <div className="scope-bar">
+          <div className="stack" style={{ gap: 2, minWidth: 0 }}>
+            <span className="small muted">Scope · {contract.confirmed_at && !dirty ? "Confirmed" : dirty ? "Unsaved edits" : "Draft"}</span>
+            <strong className="clip">{draft.core_question || "No core question yet"}</strong>
+            <span className="small muted">{draft.expectations.filter((x) => x.text.trim()).length} points to include</span>
+          </div>
+          <button type="button" className="btn btn-small" onClick={() => setChatOpen(false)}>Edit scope</button>
+        </div>
+      ) : (
       <section className="doc-surface" aria-label="Scope">
         <header>
           <strong>Scope</strong>
           {contract.confirmed_at && !dirty ? <span className="tag ok">Confirmed</span> : <span className="tag">Draft</span>}
           <span className="spacer" />
           {dirty && <button type="button" className="btn btn-small" disabled={busy} onClick={() => run(() => save())}>Save</button>}
+          {recipe.contract.ai_thread && <button type="button" className="btn btn-small btn-primary" onClick={() => setChatOpen(true)}>Ask AI</button>}
         </header>
         <div className="stack" style={{ padding: "18px 20px 22px", gap: 28 }}>
           {lite && <p className="small muted">A short format: one point to land, plus up to two more to cover.</p>}
@@ -216,47 +229,38 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
           </div>
         </div>
       </section>
+      )}
 
-      {recipe.contract.ai_thread && <aside className="rail thread" aria-label="Conversation">
-        <h3>Work it out with AI</h3>
-        <div className="messages">
-          {messages.length === 0 && (
-            <p className="small muted">Ask for a first suggestion, or describe what the piece must do. Every turn is kept here.</p>
-          )}
-          {messages.map((m) => (
-            <div key={m.id} className={`msg ${m.role}`}>
-              <p>{m.content}</p>
-              {m.role === "ai" && m.payload?.expectations && (
-                <details>
-                  <summary className="small">Suggested scope ({m.payload.expectations.length} points)</summary>
-                  <p className="small"><strong>{m.payload.core_question}</strong></p>
-                  <ol className="small">{m.payload.expectations.map((x, i) => <li key={i}>{x}</li>)}</ol>
-                  <button type="button" className="btn btn-small" onClick={() => setDraft({
-                    core_question: m.payload!.core_question ?? draft.core_question,
-                    expectations: m.payload!.expectations!.map((text) => ({ id: newId(), text })),
-                  })}>
-                    Use this suggestion
-                  </button>
-                </details>
-              )}
-            </div>
-          ))}
-          <div ref={threadEnd} />
-        </div>
-        <CleanTextarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)}
-          placeholder={messages.length ? "e.g. Add a point about cost" : "Optional: what should this piece do?"} aria-label="Message" style={{ minHeight: 70 }} />
-        <AiAction<{ message: ThreadMessage }>
-          label={messages.length ? "Send" : "Suggest a scope"}
-          disabled={dirty}
-          reason="Save your edits first so the AI sees them"
-          payload={{ task: "contract_suggest", piece_id: piece.id, message }}
-          onDone={(r) => {
-            setMessage("");
-            setData((d) => d && { ...d, messages: [...d.messages, ...(message.trim() ? [{ id: "w" + r.message.id, role: "writer" as const, content: message.trim(), payload: null, created_at: r.message.created_at }] : []), r.message] });
-            reload();
-          }}
+      {recipe.contract.ai_thread && chatOpen && (
+        <ChatPanel
+          messages={messages}
+          kind="scope"
+          pieceId={piece.id}
+          placeholder={messages.length ? "Ask anything, or tell the AI what to change" : "Ask for a first scope, or chat about anything"}
+          beforeSend={dirty ? () => save() : undefined}
+          onSent={() => reload()}
+          onMinimize={() => setChatOpen(false)}
+          copyText={(m) => [m.content, ...(m.payload?.expectations ? ["", m.payload.core_question ?? "", ...m.payload.expectations.map((x, i) => `${i + 1}. ${x}`)] : [])].join("\n")}
+          renderExtra={(m) => m.payload?.expectations ? (
+            <details>
+              <summary className="small">Suggested scope ({m.payload.expectations.length} points)</summary>
+              <p className="small"><strong>{m.payload.core_question}</strong></p>
+              <ol className="small">{m.payload.expectations.map((x, i) => <li key={i}>{x}</li>)}</ol>
+              <button type="button" className="btn btn-small btn-primary" onClick={() => {
+                // Ask first when this would replace edits that aren't saved yet.
+                if (dirty && !window.confirm("Replace your unsaved edits to the scope with this suggestion?")) return;
+                setDraft({
+                  core_question: m.payload!.core_question ?? draft.core_question,
+                  expectations: m.payload!.expectations!.map((text) => ({ id: newId(), text })),
+                });
+                setChatOpen(false);
+              }}>
+                Use this suggestion
+              </button>
+            </details>
+          ) : null}
         />
-      </aside>}
+      )}
     </div>
   );
 }

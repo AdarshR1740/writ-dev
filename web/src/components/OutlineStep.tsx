@@ -3,8 +3,9 @@ import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { BLOCK_LABELS, type Analysis, type Block, type BlockType, type Contract, type Piece, type Section, type ThreadMessage } from "../lib/types";
 import { CardForm, emptyCard } from "./CardForm";
-import { AiAction, ErrorText, Loading, Modal, CleanTextarea } from "./ui";
+import { AiAction, ErrorText, Loading, Modal } from "./ui";
 import { SeoGeoPanel } from "./SeoGeoPanel";
+import { ChatPanel } from "./ChatPanel";
 import { normalise } from "../lib/recipes";
 
 interface Draft {
@@ -54,7 +55,7 @@ const key = () => Math.random().toString(36).slice(2, 9);
 
 /** Analysis of the reviewed research, then the outline (writer-owned, AI-suggested). */
 export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; onAdvanced: () => void; onChanged: () => void }) {
-  const { data, error, reload, setData } = useLoad(async () => {
+  const { data, error, reload } = useLoad(async () => {
     const [contract, sections, thread] = await Promise.all([
       supabase.from("piece_contracts").select("*").eq("piece_id", piece.id).single().then(must<Contract>),
       supabase.from("piece_sections").select("*").eq("piece_id", piece.id).order("position").then(must<Section[]>),
@@ -68,11 +69,12 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   }, [piece.id]);
 
   const [draft, setDraft] = useState<Draft[] | null>(null);
-  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [answering, setAnswering] = useState<{ question: string } | null>(null);
   const [fixReply, setFixReply] = useState<string | null>(null);
+  // The conversation can take over the screen; the outline then shows as a compact bar.
+  const [chatOpen, setChatOpen] = useState(false);
   // The outline as it was before "Fix now" changed it, so the change can be undone.
   const [undo, setUndo] = useState<Draft[] | null>(null);
   const confirmed = Boolean(piece.outline_confirmed_at);
@@ -127,7 +129,17 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
     <div className="stack-lg">
       {recipe.analysis.enabled && <AnalysisPanel piece={piece} onRan={onChanged} onAnswer={(q) => setAnswering({ question: q })} />}
 
-      <div className="workbench">
+      <div className={`workbench${chatOpen && !confirmed && aiThread ? " chat-open" : " no-rail"}`}>
+        {chatOpen && !confirmed && aiThread ? (
+          <div className="scope-bar">
+            <div className="stack" style={{ gap: 2, minWidth: 0 }}>
+              <span className="small muted">Outline · {dirty ? "Unsaved edits" : "Draft"}</span>
+              <strong className="clip">{draft.filter((s) => s.heading.trim()).map((s) => s.heading.trim()).join(" · ") || "No sections yet"}</strong>
+              <span className="small muted">{draft.filter((s) => s.heading.trim()).length} sections</span>
+            </div>
+            <button type="button" className="btn btn-small" onClick={() => setChatOpen(false)}>Edit outline</button>
+          </div>
+        ) : (
         <section className="doc-surface" aria-label="Outline">
           <header>
             <strong>Outline</strong>
@@ -146,6 +158,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
               }}>Reopen outline</button>
             )}
             {!confirmed && dirty && <button type="button" className="btn btn-small" disabled={busy} onClick={() => act(save)}>Save</button>}
+            {!confirmed && aiThread && <button type="button" className="btn btn-small btn-primary" onClick={() => setChatOpen(true)}>Ask AI</button>}
           </header>
           <div className="stack" style={{ padding: "18px 20px 22px" }}>
             {recipe.outline.mode === "fixed" && (
@@ -250,46 +263,39 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
             )}
           </div>
         </section>
+        )}
 
-        {!confirmed && aiThread && (
-          <aside className="rail thread" aria-label="Conversation">
-            <h3>Work it out with AI</h3>
-            <div className="messages">
-              {messages.length === 0 && <p className="small muted">Ask for a first outline built from your scope and the reviewed research.</p>}
-              {messages.map((m) => (
-                <div key={m.id} className={`msg ${m.role}`}>
-                  <p>{m.content}</p>
-                  {m.role === "ai" && m.payload?.sections && (
-                    <details>
-                      <summary className="small">Suggested outline ({m.payload.sections.length} sections)</summary>
-                      <ol className="small">{m.payload.sections.map((s, i) => <li key={i}><strong>{s.heading}</strong>: {s.purpose}</li>)}</ol>
-                      <button type="button" className="btn btn-small" onClick={() => setDraft(m.payload!.sections!.map((s) => ({
-                        key: keyFor(s.heading),
-                        heading: s.heading,
-                        purpose: s.purpose,
-                        expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
-                        structure: [],
-                      })))}>
-                        Use this outline
-                      </button>
-                    </details>
-                  )}
-                </div>
-              ))}
-            </div>
-            <CleanTextarea rows={3} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="e.g. Put the cost comparison before the deep dives" aria-label="Message" style={{ minHeight: 70 }} />
-            <AiAction<{ message: ThreadMessage }>
-              label={messages.length ? "Send" : "Suggest an outline"}
-              disabled={dirty}
-              reason="Save your edits first so the AI sees them"
-              payload={{ task: "outline_suggest", piece_id: piece.id, message }}
-              onDone={(r) => {
-                setData((d) => d && { ...d, messages: [...d.messages, r.message] });
-                setMessage("");
-                reload();
-              }}
-            />
-          </aside>
+        {!confirmed && aiThread && chatOpen && (
+          <ChatPanel
+            messages={messages}
+            kind="outline"
+            pieceId={piece.id}
+            placeholder={messages.length ? "Ask anything, or tell the AI what to change" : "Ask for a first outline, or chat about anything"}
+            beforeSend={dirty ? () => act(save) : undefined}
+            onSent={() => reload()}
+            onMinimize={() => setChatOpen(false)}
+            copyText={(m) => [m.content, ...(m.payload?.sections ? ["", ...m.payload.sections.map((s, i) => `${i + 1}. ${s.heading}: ${s.purpose}`)] : [])].join("\n")}
+            renderExtra={(m) => m.payload?.sections ? (
+              <details>
+                <summary className="small">Suggested outline ({m.payload.sections.length} sections)</summary>
+                <ol className="small">{m.payload.sections.map((s, i) => <li key={i}><strong>{s.heading}</strong>: {s.purpose}</li>)}</ol>
+                <button type="button" className="btn btn-small btn-primary" onClick={() => {
+                  // Ask first when this would replace edits that aren't saved yet.
+                  if (dirty && !window.confirm("Replace your unsaved edits to the outline with this suggestion?")) return;
+                  setDraft(m.payload!.sections!.map((s) => ({
+                    key: keyFor(s.heading),
+                    heading: s.heading,
+                    purpose: s.purpose,
+                    expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
+                    structure: [],
+                  })));
+                  setChatOpen(false);
+                }}>
+                  Use this outline
+                </button>
+              </details>
+            ) : null}
+          />
         )}
       </div>
 

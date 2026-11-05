@@ -776,3 +776,36 @@ Instagram caption, Instagram carousel, LinkedIn carousel, X thread, video script
 - To make that safe, saving the outline no longer replaces every section. Sections are matched by id, so text,
   briefs and research of sections that stay are kept; new sections are added; sections left out are removed with
   their text. The AI's outline suggestions reuse a section when the heading is unchanged.
+
+## 24. The AI conversation behaves like a chat (user request)
+
+- **Shape.** The scope and outline conversations open from an "Ask AI" button into a full-width window. The newest
+  message is always in view, the box to type in is pinned at the bottom, Enter sends and Shift+Enter starts a new
+  line. Each AI reply can be copied, and the latest can be retried (the reply is replaced by a fresh answer to the
+  same message). The form behind it collapses to a bar and is saved automatically before each send, so the AI
+  always sees the writer's latest edits.
+- **Web access on request.** When the writer's message asks to look something up (search, competitors, latest,
+  statistics and similar words), the AI first runs a web lookup (up to three searches, Anthropic or OpenAI key) and
+  answers from what it found, naming the sites. The findings and the pages are stored with the reply, shown under
+  it as "Looked up on the web", and passed to every later turn. With another provider the AI says it can't look
+  things up. Lookups are recorded in usage as research.
+- **Carry-over.** Every turn receives the earlier turns *including what each one suggested* (the scope or outline it
+  proposed) and any web findings, not just the reply text, so a later "make point 3 shorter" refers to the actual
+  suggestion.
+- **Known limit.** Whether to search is decided by keywords in the writer's message, not by the model, so an
+  unusual phrasing may not trigger it; asking to "search the web" always does.
+
+### 24.1 The conversation became a general chat (replaces the keyword-triggered lookup above)
+
+- **Why:** a keyword list can't know when a writer wants the web, and the AI had to return a scope on every turn,
+  which made it read like a form, not a chat. Writers also ask things beyond the piece.
+- **How it works now:** the AI is a general assistant that knows the piece. It replies in free text, streamed as it
+  is written. Web search is a tool the model uses whenever it decides it needs one (up to four searches a turn),
+  for any subject, with no topic guardrails. Proposing a scope or an outline is a second tool it calls only when it
+  has one; the proposal appears as a card with "Use this suggestion". The conversation is sent as real chat turns
+  and each earlier proposal travels with its turn.
+- **Uses** the same controls as before: Copy, Retry, Stop, the pinned box, auto-save of the form before each send.
+- **Needs an Anthropic key.** With another provider the conversation says so; the older single-shot suggestions
+  (`contract_suggest`, `outline_suggest`) remain on the server but the screens no longer call them.
+- **Cost:** search is billed per search and the longer history costs tokens. Both are recorded as usage
+  (`chat_scope`, `chat_outline`) and count against the budget.
