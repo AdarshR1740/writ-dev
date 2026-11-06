@@ -15,3 +15,6 @@ supabase/functions/.env
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# Local session handoff notes
+HANDOFF.md

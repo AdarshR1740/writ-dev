@@ -147,7 +147,6 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
             <span className="spacer" />
             {confirmed && piece.stage === "writing" && recipe.outline.mode !== "off" && (
               <button type="button" className="btn btn-small" disabled={busy} onClick={() => {
-                if (!window.confirm("Reopen the outline for editing?\n\nSections you have already written keep their text. Writing pauses until you confirm the outline again. Sections you remove lose their text.")) return;
                 void act(async () => {
                   const { error: err } = await supabase.rpc("reopen_outline", { target_piece: piece.id });
                   if (err) throw err;
