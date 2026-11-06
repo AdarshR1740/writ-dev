@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { callFunction, errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { formatCost, plural } from "../lib/format";
@@ -9,18 +9,29 @@ import {
   type Section,
   type ResearchItem,
   type Source,
-  type SourceType,
 } from "../lib/types";
 import { AiAction, ErrorText, Loading, Tabs, CleanTextarea } from "./ui";
 import { normalise } from "../lib/recipes";
 import { cardDetail } from "../lib/cards";
 import { MAX_LINKS, parseLinks } from "../lib/links";
+import { useShowCosts } from "../lib/showCosts";
 
 interface Loaded {
   items: ResearchItem[];
   pieceItems: ResearchItem[];
   library: Source[];
   cards: Card[];
+}
+
+/** The site an item's source came from (e.g. "jasper.ai"), or "Your insights" for items from the insight cards. */
+function publisherOf(item: ResearchItem): string {
+  const url = item.sources?.url;
+  if (!url) return "Your insights";
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 const words = (s: string) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3));
@@ -50,6 +61,8 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
   }, [piece.id, section?.id]);
 
   const [focus, setFocus] = useState(0);
+  const [addOpen, setAddOpen] = useState(false);
+  const showCosts = useShowCosts();
   const [note, setNote] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -106,13 +119,6 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
     approved: data.items.filter((i) => i.status === "approved").length,
     rejected: data.items.filter((i) => i.status === "rejected").length,
   };
-  const mix = Object.entries(
-    data.items.filter((i) => i.status !== "rejected").reduce<Record<string, number>>((acc, i) => {
-      acc[i.source_type] = (acc[i.source_type] ?? 0) + 1;
-      return acc;
-    }, {}),
-  ).sort((a, b) => b[1] - a[1]);
-
   const usedStatements = new Set(data.items.map((i) => i.statement));
   const unusedPieceItems = data.pieceItems.filter((i) => !usedStatements.has(i.statement));
   const pieceWords = words(`${piece.title} ${piece.primary_keyword} ${piece.topic} ${section?.heading ?? ""}`);
@@ -130,6 +136,11 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, 6);
+
+  const onSearchDone = (r: { added: number; unverified?: number; cost_usd: number | null }) => {
+    setNote(`${plural(r.added, "new item")} to review.${r.unverified ? ` ${r.unverified} quote${r.unverified === 1 ? "" : "s"} couldn't be found on the page; check those first.` : ""} ${showCosts && r.cost_usd !== null ? `This search cost ${formatCost(r.cost_usd)}.` : ""}`.trim());
+    reload();
+  };
 
   async function act(fn: () => Promise<void>) {
     setBusy(true);
@@ -168,19 +179,23 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
                 : !reviewing
                 ? `${plural(counts.approved, "item")}, approved automatically`
                 : counts.unreviewed > 0
-                ? `${plural(counts.unreviewed, "item")} to review`
+                ? `${counts.unreviewed}/${data.items.length} items to review`
                 : `${counts.approved} approved, ${counts.rejected} rejected`}
             </strong>
-            <span className="small muted">
-              {reviewing
-                ? <>Every item needs your decision before {section ? "the brief" : "the next step"}. AI found these; it can't vouch for them.</>
-                : "This format's workflow skips item-by-item review. Reject anything that looks wrong; the summary will say research wasn't individually reviewed."}
-            </span>
           </div>
           <span className="spacer" />
-          {!locked && reviewing && counts.unreviewed > 0 && <span className="small muted disabled-reason">{counts.unreviewed} still to decide</span>}
+          {!locked && canSearch && (
+            <AiAction<{ added: number; unverified?: number; cost_usd: number | null }>
+              fn="research"
+              label={data.items.length ? "Search again" : "Do automated research"}
+              disabled={Boolean(blocked)}
+              reason="Not yet: see the note in this step"
+              payload={{ action: "search", ...scopePayload }}
+              onDone={onSearchDone}
+            />
+          )}
           {!locked && (
-            <button type="button" className="btn btn-primary" disabled={busy || (reviewing && counts.unreviewed > 0)}
+            <button type="button" className={`btn ${canSearch && data.items.length === 0 ? "" : "btn-primary"}`} disabled={busy || (reviewing && counts.unreviewed > 0)}
               onClick={() => act(async () => {
                 const { error: err } = section
                   ? await supabase.rpc("complete_section_research", { target_section: section.id })
@@ -204,15 +219,6 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
             }}>Reopen research</button>
           )}
         </div>
-
-        {mix.length > 0 && (
-          <div className="mix" aria-label="Source mix">
-            {mix.map(([type, n]) => (
-              <span key={type} className="tag">{SOURCE_TYPE_LABELS[type as SourceType]} · {n}</span>
-            ))}
-            {!mix.some(([t]) => t === "critical") && <span className="small faint">No critical views yet.</span>}
-          </div>
-        )}
 
         <ErrorText>{actionError}</ErrorText>
         {note && <p className="notice">{note}</p>}
@@ -247,8 +253,9 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
         <aside className="rail" aria-label="Find research">
           {blocked && <p className="notice info">{blocked}</p>}
           {section && recipe.sections.reuse_piece_items && unusedPieceItems.length > 0 && (
-            <div className="stack" style={{ gap: 8 }}>
-              <h3>From piece research</h3>
+            <details className="side-group" open>
+              <summary>From piece research <span className="muted">· {unusedPieceItems.length}</span></summary>
+              <div className="stack" style={{ gap: 8 }}>
               <p className="small muted">Already approved for the piece. Reuse what this section needs.</p>
               {unusedPieceItems.slice(0, 8).map((i) => (
                 <div key={i.id} className="source">
@@ -260,30 +267,20 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
                     })}>Use</button></div>
                 </div>
               ))}
-            </div>
+              </div>
+            </details>
           )}
-          {canSearch && <div className="card stack" style={{ padding: 16 }}>
-            <h3>Search the web</h3>
-            <p className="small muted">
-              Searches across original research, official sources, practitioners, critical views, data and the search
-              landscape for your keyword, guided by your reader contract. Each finding comes with the passage that
-              supports it, and quotes are checked against the source. Needs an Anthropic or OpenAI key.
-            </p>
-            <AiAction<{ added: number; unverified?: number; cost_usd: number | null }>
-              fn="research"
-              label={data.items.length ? "Search again" : "Search"}
-              disabled={Boolean(blocked)}
-              reason="Not yet: see the note above"
-              payload={{ action: "search", ...scopePayload }}
-              onDone={(r) => { setNote(`${plural(r.added, "new item")} to review.${r.unverified ? ` ${r.unverified} quote${r.unverified === 1 ? "" : "s"} couldn't be found on the page; check those first.` : ""} ${r.cost_usd !== null ? `This search cost ${formatCost(r.cost_usd)}.` : ""}`); reload(); }}
-            />
-          </div>}
-
-          {recipe.research.manual && <AddSource piece={piece} scope={scopePayload} onAdded={(n) => { setNote(`${plural(n, "new item")} from your source.`); reload(); }} />}
+          {recipe.research.manual && (
+            <details className="side-group" open={addOpen} onToggle={(e) => setAddOpen(e.currentTarget.open)}>
+              <summary>Add your own sources</summary>
+              <AddSource piece={piece} scope={scopePayload} onAdded={(n) => { setAddOpen(false); setNote(`${plural(n, "new item")} from your source.`); reload(); }} />
+            </details>
+          )}
 
           {recipe.research.cards && cardSuggestions.length > 0 && (
-            <div className="stack" style={{ gap: 8 }}>
-              <h3>Your insights</h3>
+            <details className="side-group">
+              <summary>Your insights <span className="muted">· {cardSuggestions.length}</span></summary>
+              <div className="stack" style={{ gap: 8 }}>
               {cardSuggestions.map(({ c }) => (
                 <div key={c.id} className="source">
                   <span className="small"><strong>{c.claim}</strong></span>
@@ -291,12 +288,14 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
                     <button type="button" className="btn btn-small" disabled={busy} onClick={() => addCard(c)}>Add</button></div>
                 </div>
               ))}
-            </div>
+              </div>
+            </details>
           )}
 
           {recipe.research.library && librarySuggestions.length > 0 && (
-            <div className="stack" style={{ gap: 8 }}>
-              <h3>From your library</h3>
+            <details className="side-group">
+              <summary>From your library <span className="muted">· {librarySuggestions.length}</span></summary>
+              <div className="stack" style={{ gap: 8 }}>
               {librarySuggestions.map(({ s }) => (
                 <div key={s.id} className="source">
                   <strong className="small">{s.title}</strong>
@@ -309,7 +308,8 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
                   />
                 </div>
               ))}
-            </div>
+              </div>
+            </details>
           )}
         </aside>
       )}
@@ -326,6 +326,8 @@ function ItemView({ item, focused, locked, onFocus, onReview, onLibrary }: {
   onLibrary: (inLibrary: boolean) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
+  // Compact unless the card is the one being reviewed (focused) or being edited.
+  const expanded = focused || editing !== null;
   const src = item.sources;
   // Items from cards added earlier may still carry a quote that repeats the statement.
   const shownQuote = item.card_id ? cardDetail(item.statement, item.quote) : item.quote;
@@ -335,7 +337,7 @@ function ItemView({ item, focused, locked, onFocus, onReview, onLibrary }: {
   return (
     <article id={`item-${item.id}`} className={`research ${item.status}${focused ? " focused" : ""}`} onClick={onFocus}>
       <div className="row" style={{ gap: 6 }}>
-        <span className="tag">{SOURCE_TYPE_LABELS[item.source_type]}</span>
+        <span className="tag">{publisherOf(item)}</span>
         {item.status !== "unreviewed" && <span className={`tag ${item.status === "approved" ? "ok" : ""}`}>{item.status}</span>}
         {item.edited && <span className="tag">edited</span>}
         <span className="spacer" />
@@ -349,7 +351,7 @@ function ItemView({ item, focused, locked, onFocus, onReview, onLibrary }: {
         )}
       </div>
       {editing === null ? (
-        <p className="claim">{item.statement}</p>
+        <p className={`claim${expanded ? "" : " clamp"}`}>{item.statement}</p>
       ) : (
         <div className="stack" style={{ gap: 8 }}>
           <CleanTextarea rows={3} value={editing} onChange={(e) => setEditing(e.target.value)} aria-label="Statement" autoFocus />
@@ -359,11 +361,11 @@ function ItemView({ item, focused, locked, onFocus, onReview, onLibrary }: {
           </div>
         </div>
       )}
-      {shownQuote && <blockquote className="quote">{shownQuote}</blockquote>}
+      {expanded && shownQuote && <blockquote className="quote">{shownQuote}</blockquote>}
       {item.quote_status === "unverified" && (
         <p className="small flag-text">This quote wasn't found word for word in the source. Open the source and check before approving.</p>
       )}
-      <div className="meta">
+      {expanded && <div className="meta">
         {item.card_id ? <span>From your insight cards</span> : link ? <a href={link} target="_blank" rel="noreferrer">{src?.title || src?.url}</a> : <span>{src?.title}</span>}
         {src?.published && <span>· {src.published}</span>}
         {item.secondary && <span className="tag flag">secondary: trace it to the original</span>}
@@ -374,7 +376,7 @@ function ItemView({ item, focused, locked, onFocus, onReview, onLibrary }: {
             {src.in_library ? "In library ✓" : "Add source to library"}
           </button>
         )}
-      </div>
+      </div>}
     </article>
   );
 }
@@ -389,7 +391,35 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const links = parseLinks(urls);
+  // The links box rewrites its own text (numbering), which clears the browser's undo history,
+  // so keep our own. Typing within a second counts as one step.
+  const history = useRef({ past: [] as string[], future: [] as string[], last: 0 });
+  const changeUrls = (next: string) => {
+    if (next === urls) return;
+    const h = history.current;
+    if (Date.now() - h.last > 1000) h.past.push(urls);
+    h.last = Date.now();
+    h.future = [];
+    setUrls(next);
+  };
+  const undoUrls = () => {
+    const h = history.current;
+    const prev = h.past.pop();
+    if (prev === undefined) return;
+    h.future.push(urls);
+    h.last = 0;
+    setUrls(prev);
+  };
+  const redoUrls = () => {
+    const h = history.current;
+    const next = h.future.pop();
+    if (next === undefined) return;
+    h.past.push(urls);
+    h.last = 0;
+    setUrls(next);
+  };
+
+  const links = parseLinks(urls.replace(/^\s*\d+\.\s?/gm, ""));
 
   // One link per line. Each page is fetched on its own so one blocked site doesn't stop the rest.
   async function fetchPages() {
@@ -430,8 +460,7 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
   }));
 
   return (
-    <div className="card stack" style={{ padding: 16 }}>
-      <h3>Add sources yourself</h3>
+    <div className="stack">
       <Tabs value={tab} onChange={(t) => { setTab(t); setError(null); }} options={[{ value: "url", label: "Links" }, { value: "paste", label: "Paste" }]} />
       {tab === "url" ? (
         <>
@@ -440,7 +469,13 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
               <CleanTextarea
                 rows={4}
                 value={urls}
-                onChange={(e) => setUrls(e.target.value)}
+                onChange={(e) => changeUrls(numberLines(e.target.value))}
+                onKeyDown={(e) => {
+                  const mod = e.ctrlKey || e.metaKey;
+                  const key = e.key.toLowerCase();
+                  if (mod && key === "z" && !e.shiftKey) { e.preventDefault(); undoUrls(); }
+                  else if (mod && (key === "y" || (key === "z" && e.shiftKey))) { e.preventDefault(); redoUrls(); }
+                }}
                 placeholder={"One link per line\nhttps://…\nhttps://…"}
                 aria-label="Source links, one per line"
                 style={{ minHeight: 90 }}
@@ -500,4 +535,10 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
 }
 
 interface FetchedPage { url: string; title: string; text: string; published: string }
+
+/** Keeps the links box numbered: "1. ", "2. ", … one per line. Empty stays empty so the placeholder shows. */
+function numberLines(text: string) {
+  if (text === "") return "";
+  return text.split("\n").map((line, i) => `${i + 1}. ${line.replace(/^\s*\d+\.\s?/, "")}`).join("\n");
+}
 

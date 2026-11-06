@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { formatCost } from "../lib/format";
+import { useShowCosts } from "../lib/showCosts";
 import { BLOCK_LABELS, type BriefBullet, type CheckResult, type Contract, type FactFlag, type Piece, type ResearchItem, type Section } from "../lib/types";
 import { ResearchStep } from "./ResearchStep";
 import { AiAction, CopyButton, ErrorText, Loading, CleanTextarea } from "./ui";
@@ -242,6 +243,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const showCosts = useShowCosts();
   // How many times the text has been saved since this copy of the section was loaded. A check is tied to
   // the revision it ran on, so any save after that means the check no longer describes the text.
   const [saves, setSaves] = useState({ rev: section.content_rev, n: 0 });
@@ -366,7 +368,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
                 disabled={!text.trim() || unsaved}
                 reason={!text.trim() ? "Write something first" : "Saving…"}
                 payload={{ task: "grammar_check", section_id: section.id, text }}
-                onDone={(r) => { setFixes(r.suggestions); setNote(r.suggestions.length ? null : `No corrections needed (${formatCost(r.cost_usd)}).`); onChanged(); }}
+                onDone={(r) => { setFixes(r.suggestions); setNote(r.suggestions.length ? null : (showCosts ? `No corrections needed (${formatCost(r.cost_usd)}).` : "No corrections needed.")); onChanged(); }}
               />
               {fixes && fixes.length > 0 && (
                 <ul className="fixes">

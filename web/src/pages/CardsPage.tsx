@@ -8,6 +8,7 @@ import { cardsToCsv, CARD_TYPES, parseCards, type CheckedRow } from "../lib/card
 import { readFileText } from "../lib/files";
 import { DATA_PROMPT, INSIGHT_PROMPT } from "../lib/sections";
 import { formatCost, plural } from "../lib/format";
+import { useShowCosts } from "../lib/showCosts";
 import { CARD_TYPE_LABELS, type Card, type CardFields, type CardType } from "../lib/types";
 import { useSetupStatus } from "../components/Layout";
 import { CardForm, emptyCard } from "../components/CardForm";
@@ -306,6 +307,7 @@ function ExtractCards({ companyId, onClose, onSave }: { companyId: string; onClo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"paste" | "upload">("paste");
+  const showCosts = useShowCosts();
 
   const kept = drafts.filter((d, i) => d.card && keep.has(i)).map((d) => d.card!);
 
@@ -353,7 +355,7 @@ function ExtractCards({ companyId, onClose, onSave }: { companyId: string; onClo
             {drafts.length === 0
               ? "Nothing passed the test: no insight here that a competitor couldn't also say."
               : `${plural(drafts.length, "suggestion")}. Keep the ones that are true and specific; edit them later if needed.`}
-            {cost !== null && ` This run cost ${formatCost(cost)}.`}
+            {showCosts && cost !== null && ` This run cost ${formatCost(cost)}.`}
           </p>
           <div className="card-list">
             {drafts.map((d, i) => d.card ? (

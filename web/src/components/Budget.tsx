@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { ErrorText } from "./ui";
+import { useShowCosts } from "../lib/showCosts";
 
 export interface BudgetSettings { monthly_budget_usd: number | null; budget_alert_pct: number; budget_hard_limit: boolean }
 
@@ -37,14 +38,16 @@ export function BudgetBar({ spent, budget, level }: { spent: number; budget: num
 /** Shown on the Write home once spend passes the alert level. */
 export function BudgetAlert({ companyId }: { companyId: string }) {
   const { data } = useBudget(companyId);
+  const showCosts = useShowCosts();
   if (!data) return null;
   const level = budgetLevel(data);
   if (level !== "alert" && level !== "over") return null;
+  // With costs hidden the warning still shows, without the dollar amounts.
   return (
     <p className="notice small">
       {level === "over"
-        ? <>This month's AI spend ({usd(data.spent)}) has reached the {usd(data.monthly_budget_usd!)} budget.{data.budget_hard_limit ? " AI runs are paused until next month or until an editor raises the budget." : ""} </>
-        : <>AI spend this month is {usd(data.spent)}, {Math.round((data.spent / data.monthly_budget_usd!) * 100)}% of the {usd(data.monthly_budget_usd!)} budget. </>}
+        ? <>{showCosts ? <>This month's AI spend ({usd(data.spent)}) has reached the {usd(data.monthly_budget_usd!)} budget.</> : "This month's AI budget has been reached."}{data.budget_hard_limit ? " AI runs are paused until next month or until an editor raises the budget." : ""} </>
+        : <>{showCosts ? <>AI spend this month is {usd(data.spent)}, {Math.round((data.spent / data.monthly_budget_usd!) * 100)}% of the {usd(data.monthly_budget_usd!)} budget.</> : "This month's AI spend is close to the budget."} </>}
       <Link to="/ai">See spending</Link>
     </p>
   );

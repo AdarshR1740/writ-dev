@@ -5,6 +5,7 @@ import { callFunction, errorMessage, supabase } from "../lib/supabase";
 import { useCompany } from "../lib/session";
 import { must, useLoad } from "../lib/useLoad";
 import { formatCost } from "../lib/format";
+import { setShowCosts, useShowCosts } from "../lib/showCosts";
 import {
   DEFAULT_MODELS,
   PROVIDER_LABELS,
@@ -77,6 +78,7 @@ export function AiSettingsPage() {
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const showCosts = useShowCosts();
   const [keyFor, setKeyFor] = useState<Provider | null>(null);
   const [keyValue, setKeyValue] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -111,6 +113,11 @@ export function AiSettingsPage() {
         <Lede more={<>Keys are encrypted on the server and never shown again. You can store keys for several providers; one is active at a time.</>}>{company.name} uses its own AI key, so model costs go straight to your provider at their rates.</Lede>
       </div>
       <ErrorText>{actionError}</ErrorText>
+
+      <label className="row" style={{ gap: 10, flexWrap: "nowrap" }} title="Turn off to hide costs on every other screen. This page always shows them. The setting follows your account on every device.">
+        <input type="checkbox" checked={showCosts} onChange={(e) => { setActionError(null); setShowCosts(e.target.checked).catch((err) => setActionError(errorMessage(err))); }} style={{ width: "auto", margin: 0 }} />
+        <strong>Show AI costs</strong>
+      </label>
 
       <section className="stack">
         <h2>Providers</h2>

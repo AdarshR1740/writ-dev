@@ -5,6 +5,7 @@ import { must, useLoad } from "../lib/useLoad";
 import { useCompany, useSession } from "../lib/session";
 import type { Estimate } from "../lib/types";
 import { ErrorText, CleanTextarea } from "./ui";
+import { useShowCosts } from "../lib/showCosts";
 
 interface Source { n: number; kind: string; label: string; title: string; path: string; excerpt: string }
 interface AskMessage {
@@ -49,6 +50,7 @@ export function AskWrit({ onClose }: { onClose: () => void }) {
     .select("id, role, content, payload, created_at").eq("company_id", company.id).eq("user_id", session!.user.id).order("created_at")),
   [company.id]);
   const { data: estimate } = useLoad(() => callFunction<Estimate>("ai", { task: "ask", company_id: company.id, mode: "estimate" }).catch(() => null), [company.id]);
+  const showCosts = useShowCosts();
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +149,7 @@ export function AskWrit({ onClose }: { onClose: () => void }) {
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(question); } }}
           placeholder="Ask about your pieces, cards or house file" aria-label="Your question" />
         <div className="row">
-          <span className="small faint">{estimate ? `${perQuestion(estimate.cost_usd)} a question, on ${estimate.model}.` : "Needs an AI key."}</span>
+          <span className="small faint">{estimate ? (showCosts ? `${perQuestion(estimate.cost_usd)} a question, on ${estimate.model}.` : `On ${estimate.model}.`) : "Needs an AI key."}</span>
           <span className="spacer" />
           <button type="submit" className="btn btn-primary btn-small" disabled={!question.trim() || pending !== null}>Ask</button>
         </div>
