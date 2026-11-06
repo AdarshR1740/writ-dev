@@ -63,6 +63,8 @@ export function ChatPanel({ kind, pieceId, messages, placeholder, beforeSend, on
   async function run(message: string | null) {
     setError(null);
     setSending({ message: message || null });
+    // The box empties the moment you send, like any chat; the words come back if the send fails.
+    if (message !== null) setText("");
     try {
       await beforeSend?.();
       await callFunction("ai", {
@@ -71,9 +73,9 @@ export function ChatPanel({ kind, pieceId, messages, placeholder, beforeSend, on
         ...(web ? { web: true } : {}),
         ...(message === null ? { retry: true } : { message }),
       });
-      if (message !== null) setText("");
       await onSent();
     } catch (err) {
+      if (message) setText((current) => current || message);
       setError(errorMessage(err));
       // A send that failed part-way may still have saved the writer's message.
       await onSent().catch(() => undefined);

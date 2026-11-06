@@ -192,6 +192,18 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
             </button>
           )}
           {locked && <span className="tag ok">Locked</span>}
+          {locked && (section ? section.status === "brief" : piece.stage !== "contract" && piece.stage !== "done") && (
+            <button type="button" className="btn btn-small" disabled={busy} onClick={() => {
+              if (!window.confirm("Reopen research for review?\n\nYou can change decisions and add sources. Nothing is deleted, and you finish the research again to move on.")) return;
+              void act(async () => {
+                const { error: err } = section
+                  ? await supabase.rpc("reopen_section_research", { target_section: section.id })
+                  : await supabase.rpc("reopen_piece_research", { target_piece: piece.id });
+                if (err) throw err;
+                onAdvanced();
+              });
+            }}>Reopen research</button>
+          )}
         </div>
 
         {mix.length > 0 && (

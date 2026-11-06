@@ -225,7 +225,16 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
             })}>
               {contract.confirmed_at && !dirty ? "Confirmed" : "Confirm scope"}
             </button>
-            {contract.confirmed_at && !dirty && <span className="small muted">Editing it later reopens it for confirmation.</span>}
+            {contract.confirmed_at && !dirty && (
+              <button type="button" className="btn" disabled={busy} onClick={() => {
+                if (!window.confirm("Reopen the scope for review?\n\nThe piece goes back to this step. Your research and sections are kept, and you confirm the scope again to move on.")) return;
+                void run(async () => {
+                  const { error: err } = await supabase.rpc("reopen_contract", { target_piece: piece.id });
+                  if (err) throw err;
+                  onAdvanced();
+                });
+              }}>Reopen scope</button>
+            )}
           </div>
         </div>
       </section>

@@ -817,3 +817,11 @@ Instagram caption, Instagram carousel, LinkedIn carousel, X thread, video script
   (a tick, or a search asked for in words) runs a lookup first on an Anthropic or OpenAI key; Copy, Retry, the
   pinned box and formatted replies stay. Reliability was chosen over live streaming. The 24.1 design is in git
   history (commit b849579) if it is wanted again.
+
+### 24.3 Every confirmed step can be taken back to review (user request)
+
+- Scope ("Reopen scope"), research ("Reopen research", for the piece and for a section whose brief is not yet
+  confirmed), the outline ("Reopen outline") and each written section ("Reopen") can be reopened. A step reopens
+  while the step after it is still open; to go further back, reopen the later steps first, and the error says which.
+  Nothing is deleted. Writing that has started blocks reopening the scope or research, and a signed-off piece is
+  revised instead. Each reopening is recorded in the editorial record.
