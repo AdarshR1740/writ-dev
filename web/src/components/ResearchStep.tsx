@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { callFunction, errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { formatCost, plural } from "../lib/format";
@@ -394,6 +394,13 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
   // The links box rewrites its own text (numbering), which clears the browser's undo history,
   // so keep our own. Typing within a second counts as one step.
   const history = useRef({ past: [] as string[], future: [] as string[], last: 0 });
+  // Where the cursor goes after the numbering rewrites the text, so editing mid-list doesn't throw it to the end.
+  const box = useRef<HTMLTextAreaElement>(null);
+  const caret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (caret.current !== null && box.current) box.current.setSelectionRange(caret.current, caret.current);
+    caret.current = null;
+  }, [urls]);
   const changeUrls = (next: string) => {
     if (next === urls) return;
     const h = history.current;
@@ -469,12 +476,38 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
               <CleanTextarea
                 rows={4}
                 value={urls}
-                onChange={(e) => changeUrls(numberLines(e.target.value))}
+                ref={box}
+                onChange={(e) => {
+                  caret.current = null;
+                  const raw = e.target.value;
+                  const next = numberLines(raw);
+                  if (next !== raw) caret.current = caretAfterNumbering(raw, next, e.target.selectionStart);
+                  changeUrls(next);
+                }}
                 onKeyDown={(e) => {
                   const mod = e.ctrlKey || e.metaKey;
                   const key = e.key.toLowerCase();
                   if (mod && key === "z" && !e.shiftKey) { e.preventDefault(); undoUrls(); }
                   else if (mod && (key === "y" || (key === "z" && e.shiftKey))) { e.preventDefault(); redoUrls(); }
+                  else if (!mod && (key === "backspace" || key === "delete") && e.currentTarget.selectionStart === e.currentTarget.selectionEnd) {
+                    // Deleting across a line break takes the number with it, so lines join instead of the number coming back.
+                    const pos = e.currentTarget.selectionStart;
+                    const prefix = /^\s*\d+\.\s?/;
+                    if (key === "backspace") {
+                      const lineStart = urls.lastIndexOf("\n", pos - 1) + 1;
+                      const len = urls.slice(lineStart).match(prefix)?.[0].length ?? 0;
+                      if (lineStart > 0 && pos === lineStart + len) {
+                        e.preventDefault();
+                        caret.current = lineStart - 1;
+                        changeUrls(numberLines(urls.slice(0, lineStart - 1) + urls.slice(lineStart + len)));
+                      }
+                    } else if (urls[pos] === "\n") {
+                      e.preventDefault();
+                      const len = urls.slice(pos + 1).match(prefix)?.[0].length ?? 0;
+                      caret.current = pos;
+                      changeUrls(numberLines(urls.slice(0, pos) + urls.slice(pos + 1 + len)));
+                    }
+                  }
                 }}
                 placeholder={"One link per line\nhttps://…\nhttps://…"}
                 aria-label="Source links, one per line"
@@ -535,6 +568,18 @@ function AddSource({ piece, scope, onAdded }: { piece: Piece; scope: Record<stri
 }
 
 interface FetchedPage { url: string; title: string; text: string; published: string }
+
+/** Where the cursor belongs once `raw` has been renumbered into `next`: same line, same place in its text. */
+function caretAfterNumbering(raw: string, next: string, pos: number): number {
+  const before = raw.slice(0, pos).split("\n");
+  const line = before.length - 1;
+  const prefix = before[line].match(/^\s*\d+\.\s?/)?.[0].length ?? 0;
+  const col = Math.max(0, before[line].length - prefix);
+  const out = next.split("\n");
+  let at = 0;
+  for (let i = 0; i < line; i++) at += out[i].length + 1;
+  return Math.min(at + `${line + 1}. `.length + col, next.length);
+}
 
 /** Keeps the links box numbered: "1. ", "2. ", … one per line. Empty stays empty so the placeholder shows. */
 function numberLines(text: string) {
