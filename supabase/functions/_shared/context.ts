@@ -155,7 +155,7 @@ Audience notes: ${piece.audience_notes || "(none)"}${
     if (data?.analysis) {
       // Gaps and drift points the writer ignored are not shown to the AI.
       const shown = { ...data.analysis } as Record<string, unknown>;
-      for (const k of ["gaps", "drift"]) {
+      for (const k of ["gaps", "drift", "contract_suggestions"]) {
         if (Array.isArray(shown[k])) shown[k] = (shown[k] as { ignored?: boolean }[]).filter((x) => !x.ignored);
       }
       parts.push(`<analysis>\n${JSON.stringify(shown, null, 1)}\n</analysis>`);

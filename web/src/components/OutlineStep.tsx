@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { BLOCK_LABELS, type Analysis, type Block, type BlockType, type Contract, type FixProposal, type Piece, type ResearchItem, type Section, type ThreadMessage } from "../lib/types";
 import { CardForm, emptyCard } from "./CardForm";
 import { AiAction, CleanTextarea, ErrorText, Loading, Modal } from "./ui";
+import { cardDetail } from "../lib/cards";
 import { SeoGeoPanel } from "./SeoGeoPanel";
 import { ChatPanel } from "./ChatPanel";
 import { normalise } from "../lib/recipes";
@@ -51,6 +53,9 @@ function StructureEditor({ blocks, disabled, onChange }: { blocks: Block[]; disa
   );
 }
 
+/** The outline editor is hidden until the rules for when it appears are settled (after the gaps are dealt with). */
+const SHOW_OUTLINE = false;
+
 const key = () => Math.random().toString(36).slice(2, 9);
 
 /** Analysis of the reviewed research, then the outline (writer-owned, AI-suggested). */
@@ -72,6 +77,10 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [answering, setAnswering] = useState<{ question: string } | null>(null);
+  // Counts expert answers added to the research, so the check can say it is out of date.
+  const [answeredCount, setAnsweredCount] = useState(0);
+  const savedCard = useRef<string | null>(null);
+  const savedQuote = useRef("");
   const [fixReply, setFixReply] = useState<string | null>(null);
   // The conversation can take over the screen; the outline then shows as a compact bar.
   const [chatOpen, setChatOpen] = useState(false);
@@ -139,10 +148,12 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
           onAnswer={(q) => setAnswering({ question: q })}
           blocked={dirty ? "Save your outline edits first" : null}
           coveredIds={data.sections.flatMap((s) => s.expectation_ids)}
+          answeredCount={answeredCount}
           onOutlineChanged={() => { resync.current = data; void reload(); }}
         />
       )}
 
+      {SHOW_OUTLINE && <>
       <div className={`workbench${chatOpen && !confirmed && aiThread ? " chat-open" : " no-rail"}`}>
         {chatOpen && !confirmed && aiThread ? (
           <div className="scope-bar">
@@ -330,19 +341,38 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
             setFixReply(`${fix.reply} The outline is updated. Run the check again to see what is left.`);
           });
         }} />}
+      </>}
 
       {answering && (
-        <Modal title="Save the expert's answer as an insight" onClose={() => setAnswering(null)}>
+        <Modal title="Add the expert's answer to this piece's research" onClose={() => { savedCard.current = null; setActionError(null); setAnswering(null); }}>
           <p className="small muted">Question: {answering.question}</p>
+          <ErrorText>{actionError}</ErrorText>
+          <p className="small muted">The answer is saved as an insight card in your library and added to this piece's research as an approved item, so the next check counts it.</p>
           <CardForm
             initial={{ ...emptyCard("opinion"), detail: "" }}
-            submitLabel="Save insight card"
-            onCancel={() => setAnswering(null)}
+            submitLabel="Save and add to research"
+            onCancel={() => { savedCard.current = null; setActionError(null); setAnswering(null); }}
             onSubmit={async (f) => {
-              const { data: auth } = await supabase.auth.getUser();
-              const { error: err } = await supabase.from("cards").insert({ ...f, company_id: piece.company_id, created_by: auth.user!.id, origin: "manual" });
-              if (err) setActionError(err.message);
-              setAnswering(null);
+              setActionError(null);
+              try {
+                // The card is saved once; if adding it to the research fails, a retry reuses it instead of making a copy.
+                if (!savedCard.current) {
+                  const { data: auth } = await supabase.auth.getUser();
+                  const card = must(await supabase.from("cards").insert({ ...f, company_id: piece.company_id, created_by: auth.user!.id, origin: "manual" }).select("id, claim, detail").single()) as { id: string; claim: string; detail: string };
+                  savedCard.current = card.id;
+                  savedQuote.current = cardDetail(card.claim, card.detail);
+                }
+                // The writer is the one giving this answer, so it is added as approved.
+                const { error: e } = await supabase.rpc("add_answer_to_research", { target_piece: piece.id, card: savedCard.current, item_quote: savedQuote.current });
+                if (e) throw e;
+                savedCard.current = null;
+                setAnsweredCount((n) => n + 1);
+                onChanged();
+                setAnswering(null);
+              } catch (e) {
+                // Keep the form open so nothing typed is lost.
+                setActionError(`${savedCard.current ? "The answer is saved as an insight card, but it isn't in the research yet: " : ""}${errorMessage(e)}`);
+              }
             }}
           />
         </Modal>
@@ -463,8 +493,10 @@ const FIX_LABELS: Record<FixProposal["type"], string> = {
  * "Fix it": the AI proposes changes for what the check found; the writer ticks the ones to apply, and one Undo
  * puts them all back. Rejecting research, rewording, removing or adding scope points, and adding outline sections.
  */
-function FixPanel({ piece, analysisSig, actionable, stateSig, blocked, onChanged }: {
+function FixPanel({ piece, controlsSlot, analysisSig, actionable, stateSig, blocked, onChanged }: {
   piece: Piece;
+  /** Where the Undo and Propose buttons are drawn (under the check's button). */
+  controlsSlot: HTMLElement | null;
   analysisSig: string;
   /** Whether there is anything a fix could act on. */
   actionable: boolean;
@@ -582,28 +614,31 @@ function FixPanel({ piece, analysisSig, actionable, stateSig, blocked, onChanged
     return <p className="small muted">Nothing left to fix here. Record an expert's answer to a gap, restore something you ignored, or run the check again.</p>;
   }
 
+  // The buttons sit under the check's own button at the top of the panel; the proposals list stays here.
+  const controls = (
+    <>
+      {snapshots.length > 0 && <button type="button" className="btn btn-small" disabled={busy || Boolean(blocked)} onClick={() => undo()}>Undo</button>}
+      {(!idle || hasList) && (
+        <AiAction<{ proposals: FixProposal[] }>
+          label={proposals ? "Check for more" : "Propose fixes"}
+          primary={!proposals}
+          disabled={Boolean(blocked) || busy}
+          reason={blocked ?? ""}
+          payload={{ task: "analysis_fix", piece_id: piece.id }}
+          onDone={(r) => {
+            setProposals(r.proposals);
+            setPicked(new Set(r.proposals.map((p) => p.id)));
+            setNote(null);
+            setEmptySig(r.proposals.length === 0 ? stateSig : null);
+          }}
+        />
+      )}
+    </>
+  );
+
   return (
     <div className="stack" style={{ gap: 8 }}>
-      <div className="row">
-        <h3>Fix it</h3>
-        <span className="spacer" />
-        {snapshots.length > 0 && <button type="button" className="btn btn-small" disabled={busy || Boolean(blocked)} onClick={() => undo()}>Undo</button>}
-        {(!idle || hasList) && (
-          <AiAction<{ proposals: FixProposal[] }>
-            label={proposals ? "Check for more" : "Propose fixes"}
-            primary={!proposals}
-            disabled={Boolean(blocked) || busy}
-            reason={blocked ?? ""}
-            payload={{ task: "analysis_fix", piece_id: piece.id }}
-            onDone={(r) => {
-              setProposals(r.proposals);
-              setPicked(new Set(r.proposals.map((p) => p.id)));
-              setNote(null);
-              setEmptySig(r.proposals.length === 0 ? stateSig : null);
-            }}
-          />
-        )}
-      </div>
+      {controlsSlot ? createPortal(controls, controlsSlot) : <div className="row">{controls}</div>}
       {!proposals && !note && !idle && <p className="small muted">Suggests changes for what the check found. Nothing changes until you apply them, and you can undo them.</p>}
       {note && <p className="small muted">{note}</p>}
       {askForce && (
@@ -657,8 +692,10 @@ function FixPanel({ piece, analysisSig, actionable, stateSig, blocked, onChanged
   );
 }
 
-function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, onOutlineChanged }: {
+function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, answeredCount, onOutlineChanged }: {
   piece: Piece;
+  /** Expert answers added to the research since this screen opened; each makes the saved check out of date. */
+  answeredCount: number;
   /** Scope points that a saved outline section already covers. */
   coveredIds: string[];
   onRan: () => void;
@@ -674,6 +711,7 @@ function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, onOutlineC
   const editable = piece.stage === "outline" && !piece.outline_confirmed_at;
   const [open, setOpen] = useState<{ kind: "item" | "point"; id: string } | null>(null);
   const [changed, setChanged] = useState(false);
+  useEffect(() => { if (answeredCount > 0) setChanged(true); }, [answeredCount]);
   const itemRef = (n: number) => { const id = a?.item_ids?.[n - 1]; return id && editable ? () => setOpen({ kind: "item", id }) : undefined; };
   const pointRef = (n: number) => { const id = a?.point_ids?.[n - 1]; return id && editable ? () => setOpen({ kind: "point", id }) : undefined; };
   const refs = (items: number[] = [], points: number[] = []) => (
@@ -687,7 +725,7 @@ function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, onOutlineC
   const actionable = Boolean(a?.alignment) && (
     a!.alignment!.verdict !== "aligned"
     || (a!.drift ?? []).some((d) => !d.ignored)
-    || (a!.contract_suggestions ?? []).length > 0
+    || (a!.contract_suggestions ?? []).some((c) => !c.ignored)
     || a!.gaps.some((g) => !g.ignored && (g.points ?? []).some((n) => {
       const id = a!.point_ids?.[n - 1];
       return Boolean(id) && !coveredIds.includes(id!);
@@ -696,14 +734,18 @@ function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, onOutlineC
   const stateSig = JSON.stringify([a, coveredIds]);
   const [ignoring, setIgnoring] = useState(false);
   const [ignoreErr, setIgnoreErr] = useState<string | null>(null);
-  const ignoredCount = (a?.gaps ?? []).filter((g) => g.ignored).length + (a?.drift ?? []).filter((d) => d.ignored).length;
+  // Where the Fix it controls appear: right under the check's own button.
+  const [controlsSlot, setControlsSlot] = useState<HTMLElement | null>(null);
+  const showSuggestions = recipe.analysis.contract_suggestions;
+  const ignoredCount = (a?.gaps ?? []).filter((g) => g.ignored).length + (a?.drift ?? []).filter((d) => d.ignored).length
+    + (a?.contract_suggestions ?? []).filter((c) => c.ignored).length;
   /** Ignore (or restore) one finding. It is saved with the check, and the fix proposals leave it alone. */
-  async function setIgnored(kind: "gaps" | "drift", index: number, value: boolean) {
+  async function setIgnored(kind: "gaps" | "drift" | "contract_suggestions", index: number, value: boolean) {
     if (!a) return;
     setIgnoring(true);
     setIgnoreErr(null);
     try {
-      const list = (a[kind] ?? []).map((x, i) => (i === index ? { ...x, ignored: value || undefined } : x));
+      const list = ((a[kind] ?? []) as { ignored?: boolean }[]).map((x, i) => (i === index ? { ...x, ignored: value || undefined } : x));
       must(await supabase.from("pieces").update({ analysis: { ...a, [kind]: list } }).eq("id", piece.id).select("id"));
       onRan();
     } catch (e) {
@@ -714,20 +756,26 @@ function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, onOutlineC
   }
   return (
     <section className="card stack" aria-label="Analysis">
-      <div className="row">
+      <div className="row" style={{ alignItems: "flex-start" }}>
         <div className="stack" style={{ gap: 2 }}>
-          <h2>Alignment with your topic</h2>
-          <p className="small muted">Whether the scope and research still match the topic you started with, and what is missing.</p>
+          <h2>Benchmark your scope and research against the original topic</h2>
+          <p className="small muted">Checks that what you scoped and approved still serves the topic you started with, and what is missing.</p>
         </div>
         <span className="spacer" />
-        {!piece.outline_confirmed_at && (
-          <AiAction label={a ? "Run again" : "Check alignment"} primary={!a} payload={{ task: "analysis", piece_id: piece.id }} onDone={() => { setChanged(false); onRan(); }} />
-        )}
+        <div className="stack" style={{ gap: 6, alignItems: "flex-end" }}>
+          {!piece.outline_confirmed_at && (
+            <AiAction label={a ? "Run again" : "Check alignment"} primary={!a} payload={{ task: "analysis", piece_id: piece.id }} onDone={() => { setChanged(false); onRan(); }} />
+          )}
+          <div ref={setControlsSlot} className="row" style={{ justifyContent: "flex-end" }} />
+        </div>
       </div>
       <ErrorText>{ignoreErr}</ErrorText>
       {changed && <p className="small notice">The scope or research changed since this check. Run it again to refresh it.</p>}
       {a && !a.alignment && (
         <p className="small muted">This result is from an earlier version of the check, which looked at the sources. Run it again for the alignment check.</p>
+      )}
+      {editable && a?.alignment && (
+        <FixPanel piece={piece} controlsSlot={controlsSlot} actionable={actionable} stateSig={stateSig} analysisSig={JSON.stringify(a, (k, v) => (k === "ignored" ? undefined : v))} blocked={blocked} onChanged={() => { setChanged(true); onRan(); onOutlineChanged(); }} />
       )}
       {a?.alignment && (
         <div className="stack analysis" style={{ gap: 14 }}>
@@ -743,9 +791,27 @@ function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, onOutlineC
                 {a.drift.map((d, i) => d.ignored ? null : (
                   <li key={i} className="finding">
                     <p>{d.text}</p>
-                    {refs(d.items, d.points)}
-                    <div className="row finding-actions">
+                    <div className="row finding-top">
+                      {refs([], d.points)}
+                      <span className="spacer" />
                       <button type="button" className="btn btn-quiet btn-small" disabled={ignoring} onClick={() => setIgnored("drift", i, true)}>Ignore</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {showSuggestions && a.contract_suggestions && a.contract_suggestions.some((c) => !c.ignored) && (
+            <div>
+              <h3>Suggested scope changes</h3>
+              <ul className="finding-list">
+                {a.contract_suggestions.map((c, i) => c.ignored ? null : (
+                  <li key={i} className="finding">
+                    <p>{c.change}</p>
+                    <div className="small muted">{c.why}</div>
+                    <div className="row finding-top">
+                      <span className="spacer" />
+                      <button type="button" className="btn btn-quiet btn-small" disabled={ignoring} onClick={() => setIgnored("contract_suggestions", i, true)}>Ignore</button>
                     </div>
                   </li>
                 ))}
@@ -760,11 +826,14 @@ function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, onOutlineC
                   {a.gaps.map((g, i) => g.ignored ? null : (
                     <li key={i} className="finding">
                       <p>{g.text}</p>
-                      {refs([], g.points)}
+                      <div className="row finding-top">
+                        {refs([], g.points)}
+                        <span className="spacer" />
+                        <button type="button" className="btn btn-quiet btn-small" disabled={ignoring} onClick={() => setIgnored("gaps", i, true)}>Ignore</button>
+                      </div>
                       <div className="small muted">Ask your expert: {g.expert_question}</div>
                       <div className="row finding-actions">
                         <button type="button" className="btn btn-primary btn-small" onClick={() => onAnswer(g.expert_question)}>Record the answer</button>
-                        <button type="button" className="btn btn-quiet btn-small" disabled={ignoring} onClick={() => setIgnored("gaps", i, true)}>Ignore</button>
                       </div>
                     </li>
                   ))}
@@ -782,6 +851,12 @@ function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, onOutlineC
                     <div className="row finding-actions"><button type="button" className="btn btn-quiet btn-small" disabled={ignoring} onClick={() => setIgnored("drift", i, false)}>Restore</button></div>
                   </li>
                 ))}
+                {a.contract_suggestions?.map((c, i) => !c.ignored ? null : (
+                  <li key={`c${i}`} className="finding is-ignored">
+                    <p>{c.change}</p>
+                    <div className="row finding-actions"><button type="button" className="btn btn-quiet btn-small" disabled={ignoring} onClick={() => setIgnored("contract_suggestions", i, false)}>Restore</button></div>
+                  </li>
+                ))}
                 {a.gaps.map((g, i) => !g.ignored ? null : (
                   <li key={`g${i}`} className="finding is-ignored">
                     <p>{g.text}</p>
@@ -792,18 +867,6 @@ function AnalysisPanel({ piece, onRan, onAnswer, blocked, coveredIds, onOutlineC
             </details>
           )}
         </div>
-      )}
-      {a?.contract_suggestions && a.contract_suggestions.length > 0 && (
-        <div className="notice stack" style={{ gap: 6 }}>
-          <strong className="small">The research suggests changes to your scope</strong>
-          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
-            {a.contract_suggestions.map((c, i) => <li key={i}>{c.change} <span className="muted">({c.why})</span></li>)}
-          </ul>
-          <span className="small muted">If you agree, edit the scope in step 1 and confirm it again before confirming the outline.</span>
-        </div>
-      )}
-      {editable && a?.alignment && (
-        <FixPanel piece={piece} actionable={actionable} stateSig={stateSig} analysisSig={JSON.stringify(a, (k, v) => (k === "ignored" ? undefined : v))} blocked={blocked} onChanged={() => { setChanged(true); onRan(); onOutlineChanged(); }} />
       )}
       {open?.kind === "item" && <ItemModal id={open.id} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); setChanged(true); onRan(); }} />}
       {open?.kind === "point" && <PointModal pieceId={piece.id} expectationId={open.id} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); setChanged(true); onRan(); }} />}

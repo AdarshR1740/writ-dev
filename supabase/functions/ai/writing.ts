@@ -251,6 +251,7 @@ async function prepareAnalysisFix(userId: string, body: Record<string, unknown>)
   // Gaps the writer ignored are left alone: no section is proposed for them.
   found.gaps = (found.gaps ?? []).filter((g) => !g.ignored);
   found.drift = (found.drift ?? []).filter((d) => !(d as { ignored?: boolean }).ignored);
+  found.contract_suggestions = (found.contract_suggestions ?? []).filter((c) => !(c as { ignored?: boolean }).ignored);
   // A section can only fix a gap: it must cover a scope point an open gap names and no section covers yet. Once it
   // exists the point is covered, so the same fix is never proposed twice.
   const covered = new Set((secs ?? []).flatMap((s) => s.expectation_ids as string[]));

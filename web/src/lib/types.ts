@@ -307,7 +307,7 @@ export interface Analysis {
   /** `ignored`: the writer dismissed this point as not relevant. */
   drift?: { text: string; items: number[]; points?: number[]; ignored?: boolean }[];
   gaps: { text: string; expert_question: string; points?: number[]; ignored?: boolean }[];
-  contract_suggestions?: { change: string; why: string }[];
+  contract_suggestions?: { change: string; why: string; ignored?: boolean }[];
   /** The ids behind the item and point numbers above, as they were when the check ran. Missing on older results. */
   item_ids?: string[];
   point_ids?: string[];
