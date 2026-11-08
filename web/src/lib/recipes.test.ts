@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { BASES, LONG_FORM, normalise, presetFor, stagesFor, validate } from "./recipes";
 
@@ -15,7 +15,11 @@ describe("recipes", () => {
   });
 
   it("matches the database default", () => {
-    const sql = readFileSync(new URL("../../../supabase/migrations/20261108000000_recipes.sql", import.meta.url), "utf8");
+    // The newest migration that defines default_recipe() is the one in force.
+    const dir = new URL("../../../supabase/migrations/", import.meta.url);
+    const latest = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()
+      .filter((f) => /function public\.default_recipe\(\)/.test(readFileSync(new URL(f, dir), "utf8"))).pop();
+    const sql = readFileSync(new URL(latest!, dir), "utf8");
     const json = sql.match(/select '(\{"base":"long_form".*?\})'::jsonb/s)?.[1];
     expect(json, "default_recipe() not found").toBeTruthy();
     expect(JSON.parse(json!)).toEqual(LONG_FORM);

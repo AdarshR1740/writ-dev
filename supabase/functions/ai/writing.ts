@@ -79,32 +79,37 @@ function task<T>(
 // ---------------------------------------------------------------------------
 
 export const ANALYSIS_SYSTEM = `ROLE
-You analyse reviewed research for one piece of B2B content before it is outlined. You do not write the piece. Your job is to show the writer where the real substance is.
+You check whether a piece of B2B content is still on the topic it started with, before it is outlined. You do not write the piece.
 
 WHAT YOU RECEIVE
-- <brief> and <reader_contract>: what the piece is about and what the reader expects.
-- <approved_research>: numbered items, written [1], [2], and so on. Items from the company's own insight cards are marked "card". Everything else is from outside sources.
+- <brief>: the original intent: the title, topic, primary keyword and goal the piece started with.
+- <reader_contract>: the current intent: the core question and the points the piece owes the reader.
+- <approved_research>: numbered items, written [1], [2], and so on. They are references for drafting later. Do not judge the sources, their quality, their wording or whether they agree with each other.
 
 STEPS
-1. Read every approved item.
-2. Look for each of the four things below. Take them one at a time.
-3. For each thing you find, write one short, concrete entry. Refer to items by their number.
+1. Write the original intent down for yourself in one line, from the brief's topic and primary keyword.
+2. Compare the reader contract with it. Does the core question, and each point, still serve that intent?
+3. Compare the approved research with the intent and with the contract. Taken together, does it cover what the piece is about, or has it moved onto a neighbouring subject?
+4. Report what you found, in the parts below.
 
-THE FOUR THINGS
-- tensions: places where two or more items disagree, or where the evidence is mixed. Entry: "text" says what disagrees; "items" lists the item numbers.
-- consensus_vs_insight: places where a "card" item confirms or contradicts what the outside items say. These are the strongest angles ("everyone says X; our own calls say Y"). Entry: "text" says what the consensus is and what the company's view is; "items" lists the numbers.
-- gaps: important questions for this reader that no approved item answers. Entry: "text" names the gap; "expert_question" is ONE specific question the company's own expert could answer from experience.
-- contract_suggestions: changes the research suggests for the reader contract, such as an expectation readers clearly need that the contract lacks, or one the evidence can't support. Entry: "change" says what to change; "why" says why. The writer decides.
+THE PARTS
+- alignment: "verdict" is "aligned" when the contract and research both match the original intent, "partly" when some of either has moved away, "drifted" when most has. "summary" is one or two sentences naming the original intent and how the current contract and research relate to it.
+- drift: places where the contract or the research moves away from the original intent. Describe each by theme, not item by item: one entry for a group of research that covers the same neighbouring subject, one for a contract point that has moved. Entry: "text" says what moved away and where (which contract point, or what that part of the research covers); "items" lists the numbers of the items in that group, as references only, and is empty when it is about the contract alone; "points" lists the numbers of the contract expectations involved, numbered as in <reader_contract>, and is empty when it is about the research alone.
+- gaps: important questions that the original intent implies for this reader and that no approved item answers. Entry: "text" names the gap; "expert_question" is ONE specific question the company's own expert could answer from experience; "points" lists the numbers of the contract expectations the gap belongs to, numbered as in <reader_contract>, or is empty.
+- contract_suggestions: changes to the reader contract that would bring it back in line with the original intent, such as a point to add, narrow or drop. Entry: "change" says what to change; "why" says why. The writer decides.
 
 RULES
-- Use only the approved items. Don't bring in outside facts.
+- Judge fit with the topic only. Use only the brief, the contract and the approved items. Don't bring in outside facts.
+- Never comment on a source: not on whether it is reliable, a vendor, secondary, dated or one-sided, and not on whether its figures can be trusted. Say what the research covers or lacks, nothing about where it came from.
 - Be concrete and brief: one or two sentences per entry.
-- If there is nothing real for one of the four things, return an empty list for it. Never pad.`;
+- Never write item numbers or point numbers inside "text". Say what the research covers, not which item; the numbers go in "items" and "points" only.
+- Report only gaps that matter: at most four. Do not list a gap just because a contract point has little research behind it; list it when the missing material would change what the piece can say. Merge gaps that share a cause.
+- If there is nothing real for a part, return an empty list for it. Never pad. A verdict of "aligned" with empty lists is a good answer.`;
 
 const analysisSchema = obj({
-  tensions: list(obj({ text: str, items: list({ type: "integer" }) })),
-  consensus_vs_insight: list(obj({ text: str, items: list({ type: "integer" }) })),
-  gaps: list(obj({ text: str, expert_question: str })),
+  alignment: obj({ verdict: { type: "string", enum: ["aligned", "partly", "drifted"] }, summary: str }),
+  drift: list(obj({ text: str, items: list({ type: "integer" }), points: list({ type: "integer" }) })),
+  gaps: list(obj({ text: str, expert_question: str, points: list({ type: "integer" }) })),
   contract_suggestions: list(obj({ change: str, why: str })),
 });
 
@@ -112,11 +117,15 @@ async function prepareAnalysis(userId: string, body: Record<string, unknown>): P
   const piece = await pieceFor(userId, body);
   requireStep(piece, on(piece, "analysis.enabled"), "Analysis");
   if (!["outline", "writing", "done"].includes(piece.stage)) throw new UserError("Finish research first.");
-  // Wiring: brief, contract and approved research. No voice.
-  const context = await contextFor(piece, ["brief", "contract", "piece_items"]);
+  // Wiring: brief, contract and approved research as plain statements (no source details, since sources aren't
+  // judged here). No voice.
+  const context = await contextFor(piece, ["brief", "contract", "piece_items_plain"]);
+  // The ids behind the numbers the model will use, so the screen can open "item 4" or "point 2" even after the
+  // lists change.
+  const itemIds = (await approvedItems(piece.id)).map((i) => i.id);
+  const { data: contractRow } = await admin.from("piece_contracts").select("expectations").eq("piece_id", piece.id).maybeSingle();
+  const pointIds = ((contractRow?.expectations ?? []) as { id: string }[]).map((e) => e.id);
   const off = [
-    ["tensions", "analysis.tensions"],
-    ["consensus_vs_insight", "analysis.insight_vs_consensus"],
     ["gaps", "analysis.gaps"],
     ["contract_suggestions", "analysis.contract_suggestions"],
   ].filter(([, path]) => !on(piece, path)).map(([field]) => field);
@@ -124,10 +133,179 @@ async function prepareAnalysis(userId: string, body: Record<string, unknown>): P
   const system = off.length ? `${base}\n\nThis format doesn't use: ${off.join(", ")}. Return empty lists for those.` : base;
   return task<Record<string, unknown>>("analysis", "reason", piece, userId, system, context, analysisSchema, 2500,
     async (data, cost, model) => {
-      const { error } = await admin.from("pieces").update({ analysis: data }).eq("id", piece.id);
+      const analysis = { ...data, item_ids: itemIds, point_ids: pointIds };
+      const { error } = await admin.from("pieces").update({ analysis }).eq("id", piece.id);
       if (error) throw error;
       await logEvent(piece, userId, "analysis_run");
-      return { analysis: data, cost_usd: cost, model };
+      return { analysis, cost_usd: cost, model };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Fixes for what the alignment check found
+// ---------------------------------------------------------------------------
+
+export const ANALYSIS_FIX_SYSTEM = `ROLE
+You propose concrete fixes for a piece of B2B content whose reader contract and research have been checked against the topic the piece started with. You do not write the piece.
+
+WHAT YOU RECEIVE
+- <brief>: the original intent: the title, topic, primary keyword and goal.
+- <reader_contract>: the core question and the numbered expectations (the scope points).
+- <approved_research>: numbered items. Do not judge the sources, only whether an item fits the topic.
+- <analysis>: what the alignment check found: the verdict, where the plan drifts, gaps and suggested contract changes.
+- <outline>: the sections so far, each with the numbers of the scope points it covers.
+
+STEPS
+1. Read what the analysis found.
+2. For each finding that one of the actions below can fix, propose the smallest change that fixes it.
+3. Propose nothing for a finding that none of the actions can fix. A gap, for example, needs the company's own expert, so it is left alone.
+
+THE ACTIONS
+- reject_item: "item" is the number of approved research that is off the topic, taken from where the plan drifts. Rejecting keeps the item; the writer can restore it.
+- edit_point: "point" is the number of a scope point that has drifted; "text" is its new wording. Keep what still fits.
+- remove_point: "point" is a scope point that does not serve the original intent and cannot be fixed by rewording.
+- add_point: "text" is a new scope point that the original intent needs and the contract lacks. To also add an outline section for it, fill "heading" and "purpose"; otherwise leave them empty.
+- add_section: "points" lists the numbers of existing scope points that an open gap in <analysis> names and that no outline section covers; "heading" and "purpose" describe one new section that covers them and gives the gap a home. The heading is a reader-facing section title; the purpose says what the section tells the reader. Points that share a gap go in one section.
+
+EVERY PROPOSAL HAS ALL FIELDS
+Use 0 for "item" and "point", "" for "text", "heading" and "purpose", and [] for "points" when an action doesn't use them. "why" is one sentence saying what the change fixes.
+
+RULES
+- Every proposal must answer a specific finding in <analysis>: an entry under drift, a suggested contract change, or an open gap whose scope point has no outline section yet. Do not look for improvements of your own. Fixing a finding once settles it; do not propose a second change for the same thing.
+- add_section is only for scope points that an open gap names and that no section covers. It may be proposed when <outline> has no sections yet. Never propose a section for a point that already has one.
+- If the verdict is "aligned", the analysis has no drift entries and no suggested contract changes, and no open gap names a scope point without a section, return an empty list.
+- Judge fit with the topic only. Use only what you are given. Never invent facts and never reword research items.
+- Never comment on a source's reliability.
+- Propose at most 10 changes, fewer when fewer will do. If nothing needs fixing, return an empty list.
+- Scope points are things the reader needs, in plain words, not tasks for the writer.
+- Never remove the last scope point.`;
+
+const FIX_TYPES = ["reject_item", "edit_point", "remove_point", "add_point", "add_section"] as const;
+const analysisFixSchema = obj({
+  proposals: list(obj({
+    type: { type: "string", enum: [...FIX_TYPES] },
+    why: str,
+    item: { type: "integer" },
+    point: { type: "integer" },
+    text: str,
+    heading: str,
+    purpose: str,
+    points: list({ type: "integer" }),
+  })),
+});
+
+/** One proposed change, with ids the screen can apply. */
+interface FixProposal {
+  id: string;
+  type: (typeof FIX_TYPES)[number];
+  why: string;
+  item_id?: string;
+  item_text?: string;
+  point_id?: string;
+  point_text?: string;
+  /** New wording for edit_point, or the text of the point add_point creates. */
+  text?: string;
+  /** add_point: the id the new point will have, so a section can point at it. */
+  new_point_id?: string;
+  /** A new section, for add_section or add_point. */
+  heading?: string;
+  purpose?: string;
+  point_ids?: string[];
+}
+
+function newPointId(): string {
+  return crypto.randomUUID().slice(0, 8);
+}
+
+async function prepareAnalysisFix(userId: string, body: Record<string, unknown>): Promise<Prepared> {
+  const piece = await pieceFor(userId, body);
+  requireStep(piece, on(piece, "analysis.enabled"), "Analysis");
+  const { data: row } = await admin.from("pieces").select("analysis, outline_confirmed_at, stage").eq("id", piece.id).single();
+  if (row?.stage !== "outline" || row.outline_confirmed_at) throw new UserError("Fixes can be applied before the outline is confirmed.");
+  if (!row.analysis) throw new UserError("Run the alignment check first.");
+
+  const items = await approvedItems(piece.id);
+  const { data: c } = await admin.from("piece_contracts").select("expectations").eq("piece_id", piece.id).maybeSingle();
+  const points = (c?.expectations ?? []) as { id: string; text: string }[];
+  // The check's numbers ([3], "point 2") belong to the research and scope as they were when it ran. If either has
+  // changed since, they no longer line up, so the check has to be run again first.
+  const ran = row.analysis as { item_ids?: string[]; point_ids?: string[] };
+  if (ran.item_ids?.join() !== items.map((i) => i.id).join() || ran.point_ids?.join() !== points.map((x) => x.id).join()) {
+    throw new UserError("The research or scope has changed since the check. Run the check again first.");
+  }
+  const { data: secs } = await admin.from("piece_sections").select("heading, purpose, expectation_ids").eq("piece_id", piece.id).order("position");
+  const outline = (secs ?? []).map((s, i) => {
+    const covers = points.flatMap((p, j) => (s.expectation_ids as string[]).includes(p.id) ? [j + 1] : []);
+    return `${i + 1}. ${s.heading}${s.purpose ? ` (${s.purpose})` : ""} covers points: ${covers.join(", ") || "none"}`;
+  }).join("\n");
+  const context = `${await contextFor(piece, ["brief", "contract", "piece_items_plain", "analysis"])}\n\n<outline>\n${outline || "(no sections yet)"}\n</outline>`;
+
+  const canEditScope = setting<string>(piece, "contract.mode") !== "off";
+  const canAddSections = setting<string>(piece, "outline.mode") !== "off";
+  const found = row.analysis as {
+    alignment?: { verdict?: string };
+    drift?: unknown[];
+    contract_suggestions?: unknown[];
+    gaps?: { points?: number[]; ignored?: boolean }[];
+  };
+  // Gaps the writer ignored are left alone: no section is proposed for them.
+  found.gaps = (found.gaps ?? []).filter((g) => !g.ignored);
+  found.drift = (found.drift ?? []).filter((d) => !(d as { ignored?: boolean }).ignored);
+  // A section can only fix a gap: it must cover a scope point an open gap names and no section covers yet. Once it
+  // exists the point is covered, so the same fix is never proposed twice.
+  const covered = new Set((secs ?? []).flatMap((s) => s.expectation_ids as string[]));
+  const gapPointIds = new Set((found.gaps ?? []).flatMap((g) => g.points ?? [])
+    .map((n) => points[n - 1]?.id).filter((id): id is string => Boolean(id) && !covered.has(id)));
+  const nothingToFix = found.alignment?.verdict === "aligned" && !found.drift?.length && !found.contract_suggestions?.length
+    && gapPointIds.size === 0;
+  const maxPoints = setting<string>(piece, "contract.mode") === "lite" ? 2 : 7;
+  const system = (await promptSet(piece.company_id))("analysis_fix", ANALYSIS_FIX_SYSTEM)
+    + (canEditScope ? "" : "\n\nThis format has no scope: do not propose edit_point, remove_point or add_point.")
+    + (canAddSections ? "" : "\n\nThis format has no outline sections: do not propose add_section, and leave heading and purpose empty.");
+
+  return task<{ proposals: { type: string; why: string; item: number; point: number; text: string; heading: string; purpose: string; points: number[] }[] }>(
+    "analysis_fix", "reason", piece, userId, system, context, analysisFixSchema, 2500,
+    async (data, cost, model) => {
+      const out: FixProposal[] = [];
+      const usedItems = new Set<string>();
+      const usedPoints = new Set<string>();
+      const sectionPoints = new Set<string>();
+      let removed = 0;
+      let added = 0;
+      // An "aligned" check with nothing under drift or suggestions has nothing to fix, whatever the model says.
+      for (const p of nothingToFix ? [] : data.proposals.slice(0, 10)) {
+        const why = p.why.trim();
+        const heading = p.heading.trim();
+        const purpose = p.purpose.trim();
+        const text = p.text.trim();
+        const id = `${p.type}-${out.length + 1}`;
+        if (p.type === "reject_item") {
+          const it = items[p.item - 1];
+          if (!it || usedItems.has(it.id)) continue;
+          usedItems.add(it.id);
+          out.push({ id, type: p.type, why, item_id: it.id, item_text: it.statement });
+        } else if (p.type === "edit_point" || p.type === "remove_point") {
+          const pt = points[p.point - 1];
+          if (!canEditScope || !pt || usedPoints.has(pt.id)) continue;
+          if (p.type === "edit_point" && (!text || text === pt.text.trim())) continue;
+          if (p.type === "remove_point" && points.length - removed <= 1) continue;
+          usedPoints.add(pt.id);
+          if (p.type === "remove_point") removed++;
+          out.push({ id, type: p.type, why, point_id: pt.id, point_text: pt.text, ...(p.type === "edit_point" ? { text } : {}) });
+        } else if (p.type === "add_point") {
+          if (!canEditScope || !text || points.length - removed + added >= maxPoints) continue;
+          added++;
+          out.push({ id, type: p.type, why, text, new_point_id: newPointId(), ...(canAddSections && heading ? { heading, purpose } : {}) });
+        } else if (p.type === "add_section") {
+          const ids = [...new Set(p.points.map((n) => points[n - 1]?.id).filter((x): x is string => Boolean(x)))]
+            .filter((x) => gapPointIds.has(x) && !sectionPoints.has(x));
+          if (!canAddSections || !heading || !ids.length) continue;
+          ids.forEach((x) => sectionPoints.add(x));
+          out.push({ id, type: p.type, why, heading, purpose, point_ids: ids });
+        }
+      }
+      await logEvent(piece, userId, "analysis_fixes_proposed", { count: out.length });
+      return { proposals: out, cost_usd: cost, model };
     });
 }
 
@@ -140,7 +318,7 @@ You are a writer outlining one piece of B2B content.
 
 WHAT YOU RECEIVE
 - <brief>, <reader_contract>: the subject and the numbered expectations the piece owes the reader.
-- <analysis>: tensions, company insights and gaps found in the research.
+- <analysis>: whether the scope and research still match the original topic, where they drift from it, and gaps.
 - <approved_research>: numbered items.
 - <format_profile> (sometimes): how pieces in this format are usually organised.
 - <current_outline> and <conversation>: the outline now, and what the writer and you have said, including earlier suggestions and anything found on the web.
@@ -1089,6 +1267,7 @@ export async function applySeoFix(userId: string, body: Record<string, unknown>)
 
 export const WRITING_TASKS: Record<string, (userId: string, body: Record<string, unknown>) => Promise<Prepared>> = {
   analysis: prepareAnalysis,
+  analysis_fix: prepareAnalysisFix,
   outline_suggest: prepareOutline,
   section_brief: prepareBrief,
   section_draft: prepareDraft,

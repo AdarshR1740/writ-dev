@@ -18,7 +18,7 @@ export interface Recipe {
     manual: boolean;
     review: boolean;
   };
-  analysis: { enabled: boolean; tensions: boolean; insight_vs_consensus: boolean; gaps: boolean; contract_suggestions: boolean };
+  analysis: { enabled: boolean; gaps: boolean; contract_suggestions: boolean };
   outline: { mode: "off" | "fixed" | "free"; template: string[]; ai_thread: boolean; seo_geo_check: boolean };
   sections: { research: boolean; timing: "just_in_time" | "up_front"; reuse_piece_items: boolean; brief: boolean };
   writing: { ai_draft: boolean };
@@ -32,7 +32,7 @@ export const LONG_FORM: Recipe = {
   brief: { keyword: true, goal: true, audience: true, customer: false, offer: false },
   contract: { mode: "full", ai_thread: true },
   research: { enabled: true, web_search: true, max_searches: 6, serp: true, cards: true, library: true, manual: true, review: true },
-  analysis: { enabled: true, tensions: true, insight_vs_consensus: true, gaps: true, contract_suggestions: true },
+  analysis: { enabled: true, gaps: true, contract_suggestions: true },
   outline: { mode: "free", template: [], ai_thread: true, seo_geo_check: true },
   sections: { research: true, timing: "just_in_time", reuse_piece_items: true, brief: true },
   writing: { ai_draft: true },
@@ -47,7 +47,7 @@ const SHORT_FORM: Recipe = {
   brief: { keyword: false, goal: true, audience: false, customer: false, offer: false },
   contract: { mode: "lite", ai_thread: true },
   research: { enabled: true, web_search: true, max_searches: 3, serp: false, cards: true, library: true, manual: true, review: true },
-  analysis: { enabled: false, tensions: false, insight_vs_consensus: false, gaps: false, contract_suggestions: false },
+  analysis: { enabled: false, gaps: false, contract_suggestions: false },
   outline: { mode: "off", template: [], ai_thread: false, seo_geo_check: false },
   sections: { research: false, timing: "just_in_time", reuse_piece_items: true, brief: true },
   writing: { ai_draft: true },
@@ -60,7 +60,7 @@ const CASE_STUDY: Recipe = {
   brief: { keyword: true, goal: true, audience: true, customer: true, offer: false },
   contract: { mode: "full", ai_thread: true },
   research: { enabled: true, web_search: false, max_searches: 3, serp: false, cards: true, library: true, manual: true, review: true },
-  analysis: { enabled: false, tensions: false, insight_vs_consensus: false, gaps: false, contract_suggestions: false },
+  analysis: { enabled: false, gaps: false, contract_suggestions: false },
   outline: { mode: "fixed", template: ["The challenge", "The approach", "The result", "In their words"], ai_thread: false, seo_geo_check: false },
   sections: { research: false, timing: "just_in_time", reuse_piece_items: true, brief: true },
   writing: { ai_draft: true },
@@ -118,7 +118,7 @@ export function presetFor(templateKey: string | null): Recipe {
     case "video_script": {
       const r = clone(LONG_FORM);
       r.research = { ...r.research, serp: false, max_searches: 4 };
-      r.analysis = { ...r.analysis, enabled: false, tensions: false, insight_vs_consensus: false, gaps: false, contract_suggestions: false };
+      r.analysis = { ...r.analysis, enabled: false, gaps: false, contract_suggestions: false };
       r.outline = { mode: "fixed", template: ["Hook", "Setup", "Segment 1", "Segment 2", "Segment 3", "Call to action"], ai_thread: false, seo_geo_check: false };
       r.sections = { ...r.sections, research: false };
       r.checks = { ...r.checks, seo: false, geo: false };
@@ -171,8 +171,6 @@ export function validate(r: Recipe): Issue[] {
   need(r.research.serp && !r.brief.keyword, "research.serp", "The search landscape needs a primary keyword in the brief.");
   need(r.research.max_searches < 1 || r.research.max_searches > 10, "research.max_searches", "Max searches must be between 1 and 10.");
   need(r.analysis.enabled && !r.research.enabled, "analysis.enabled", "Analysis needs research.");
-  need(r.analysis.enabled && !(r.analysis.tensions || r.analysis.insight_vs_consensus || r.analysis.gaps || r.analysis.contract_suggestions),
-    "analysis.enabled", "Turn on at least one part of the analysis, or switch it off.");
   need(r.analysis.contract_suggestions && r.contract.mode === "off", "analysis.contract_suggestions", "Scope suggestions need a scope.");
   need(r.contract.ai_thread && r.contract.mode === "off", "contract.ai_thread", "The scope conversation needs a scope.");
   need(r.outline.mode === "fixed" && r.outline.template.filter((h) => h.trim()).length === 0, "outline.template", "A fixed outline needs at least one heading.");

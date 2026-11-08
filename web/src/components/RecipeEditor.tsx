@@ -61,11 +61,9 @@ const MODULES: { title: string; lede: string; controls: Control[] }[] = [
   },
   {
     title: "Analysis",
-    lede: "Where the substance is, before outlining.",
+    lede: "Whether the scope and research still match the topic, before outlining.",
     controls: [
-      { path: "analysis.enabled", label: "Analysis", kind: "bool" },
-      { show: analysis, sub: true, path: "analysis.tensions", label: "Tensions between sources", kind: "bool" },
-      { show: analysis, sub: true, path: "analysis.insight_vs_consensus", label: "Your insight vs. the consensus", kind: "bool" },
+      { path: "analysis.enabled", label: "Alignment check", kind: "bool" },
       { show: analysis, sub: true, path: "analysis.gaps", label: "Gaps and expert questions", kind: "bool" },
       { show: analysis, sub: true, path: "analysis.contract_suggestions", label: "Suggest scope changes", kind: "bool" },
     ],

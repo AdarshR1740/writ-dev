@@ -302,10 +302,34 @@ export interface Section {
 }
 
 export interface Analysis {
-  tensions: { text: string; items: number[] }[];
-  consensus_vs_insight: { text: string; items: number[] }[];
-  gaps: { text: string; expert_question: string }[];
+  /** Whether the scope and research still match the topic the piece started with. Missing on results from before this check. */
+  alignment?: { verdict: "aligned" | "partly" | "drifted"; summary: string };
+  /** `ignored`: the writer dismissed this point as not relevant. */
+  drift?: { text: string; items: number[]; points?: number[]; ignored?: boolean }[];
+  gaps: { text: string; expert_question: string; points?: number[]; ignored?: boolean }[];
   contract_suggestions?: { change: string; why: string }[];
+  /** The ids behind the item and point numbers above, as they were when the check ran. Missing on older results. */
+  item_ids?: string[];
+  point_ids?: string[];
+}
+
+/** One change the AI proposed after the alignment check, with the ids the screen needs to apply it. */
+export interface FixProposal {
+  id: string;
+  type: "reject_item" | "edit_point" | "remove_point" | "add_point" | "add_section";
+  why: string;
+  item_id?: string;
+  item_text?: string;
+  point_id?: string;
+  point_text?: string;
+  /** New wording for edit_point, or the text of the point add_point creates. */
+  text?: string;
+  /** add_point: the id the new point will have. */
+  new_point_id?: string;
+  /** A new outline section, for add_section or add_point. */
+  heading?: string;
+  purpose?: string;
+  point_ids?: string[];
 }
 
 export interface PieceLink {

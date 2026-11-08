@@ -7,6 +7,7 @@ import { admin } from "../_shared/supabase.ts";
 import { consolidateTemplate, CONTRACT_LITE, CONTRACT_SYSTEM, EXTRACT_SYSTEM } from "./prompts.ts";
 import { WEB_LOOKUP_SYSTEM } from "./chat.ts";
 import {
+  ANALYSIS_FIX_SYSTEM,
   ANALYSIS_SYSTEM,
   BRIEF_SHORT,
   BRIEF_SYSTEM,
@@ -137,7 +138,7 @@ export const ENTRIES: Entry[] = [
   {
     id: "analysis",
     group: "Outline and writing",
-    title: "Analyse the approved research",
+    title: "Check the plan against the topic",
     when: "Before the outline, once piece research is approved.",
     tier: "reason",
     receives: ["Brief", "Scope", "Approved piece research"],
@@ -147,6 +148,15 @@ export const ENTRIES: Entry[] = [
       text: ANALYSIS_SYSTEM,
       locked: [{ label: "Added when a format switches parts off", text: "This format doesn't use: (the parts switched off). Return empty lists for those." }],
     }],
+  },
+  {
+    id: "analysis_fix",
+    group: "Outline and writing",
+    title: "Propose fixes for the alignment check",
+    when: "When you ask for fixes after the alignment check, before the outline is confirmed.",
+    tier: "reason",
+    receives: ["Brief", "Scope", "Approved piece research (statements only)", "The alignment check", "The outline so far"],
+    units: [{ key: "analysis_fix", label: "Prompt", text: ANALYSIS_FIX_SYSTEM }],
   },
   {
     id: "outline_suggest",

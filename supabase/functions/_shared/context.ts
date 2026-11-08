@@ -15,6 +15,8 @@ export type Block =
   | "analysis"
   | "outline"
   | "piece_items"
+  /** Approved research as numbered statements only: no source type or source name, for checks that must not weigh sources. */
+  | "piece_items_plain"
   | "section_items"
   | "voice_memory";
 
@@ -150,7 +152,14 @@ Audience notes: ${piece.audience_notes || "(none)"}${
   }
   if (blocks.includes("analysis")) {
     const { data } = await admin.from("pieces").select("analysis").eq("id", piece.id).single();
-    if (data?.analysis) parts.push(`<analysis>\n${JSON.stringify(data.analysis, null, 1)}\n</analysis>`);
+    if (data?.analysis) {
+      // Gaps and drift points the writer ignored are not shown to the AI.
+      const shown = { ...data.analysis } as Record<string, unknown>;
+      for (const k of ["gaps", "drift"]) {
+        if (Array.isArray(shown[k])) shown[k] = (shown[k] as { ignored?: boolean }[]).filter((x) => !x.ignored);
+      }
+      parts.push(`<analysis>\n${JSON.stringify(shown, null, 1)}\n</analysis>`);
+    }
   }
   if (blocks.includes("outline")) {
     const { data } = await admin.from("piece_sections").select("position, heading, purpose").eq("piece_id", piece.id)
@@ -162,6 +171,10 @@ Audience notes: ${piece.audience_notes || "(none)"}${
   if (blocks.includes("piece_items")) {
     const items = await approvedItems(piece.id);
     parts.push(`<approved_research>\n${itemsText(items) || "(none)"}\n</approved_research>`);
+  }
+  if (blocks.includes("piece_items_plain")) {
+    const items = await approvedItems(piece.id);
+    parts.push(`<approved_research>\n${items.map((i) => `[${i.n}] ${i.statement}`).join("\n") || "(none)"}\n</approved_research>`);
   }
   if (blocks.includes("section_items") && section) {
     const items = await approvedItems(piece.id, section.id);
