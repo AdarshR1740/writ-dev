@@ -33,9 +33,18 @@ const DEFAULT_MAX_SEARCHES = 6;
 const MAX_SOURCE_CHARS = 300_000;
 
 /** The user message for a search: states the subject outright so a small model can't drift off it. */
-function searchRequest(piece: Piece, context: string, section: SectionRow | null): string {
+function searchRequest(piece: Piece, context: string, section: SectionRow | null, focus = ""): string {
   const subject = piece.topic?.trim() || piece.title;
   const keyword = piece.primary_keyword ? ` (primary keyword: "${piece.primary_keyword}")` : "";
+  if (focus) {
+    // A gap the alignment check found: material the approved research doesn't have. Search for that and nothing else.
+    return `${context}
+
+TASK
+The piece "${piece.title}" (subject: "${subject}"${keyword}) has been researched, but the approved research is missing this:
+"${focus}"
+Search only for published material that fills that gap. Every search must be about "${subject}" and that gap. Skip anything the approved research already says.`;
+  }
   if (section) {
     return `${context}
 
@@ -200,6 +209,8 @@ Deno.serve(handle(async (req) => {
 
   const section = body.section_id ? await loadSection(String(body.section_id)) : null;
   const piece = await loadPiece(section ? section.piece_id : String(body.piece_id ?? ""));
+  // Set only for a search about one gap (piece level, search action).
+  const focus = !section && body.action === "search" ? String(body.focus ?? "").trim().slice(0, 600) : "";
   await requireRole(user.id, piece.company_id, "member");
   if (section) {
     if (section.status !== "research") throw new UserError("This section's research is already finished.");
@@ -209,7 +220,8 @@ Deno.serve(handle(async (req) => {
         .lt("position", section.position).neq("status", "written");
       if (earlier?.length) throw new UserError("Write the earlier sections first (this piece researches one section at a time).");
     }
-  } else if (piece.stage !== "research") {
+  } else if (piece.stage !== "research" && !(focus && piece.stage === "outline")) {
+    // A search aimed at a gap from the alignment check is also allowed at the outline step, before it is confirmed.
     throw new UserError("Piece-level research is finished.");
   }
   const { data: contract } = await admin.from("piece_contracts").select("confirmed_at").eq("piece_id", piece.id)
@@ -219,7 +231,8 @@ Deno.serve(handle(async (req) => {
   const prompts = await promptSet(piece.company_id);
   const estimate = body.mode === "estimate";
 
-  const maxSearches = Math.min(10, Math.max(1, Number(setting<number>(piece, "research.max_searches")) || DEFAULT_MAX_SEARCHES));
+  // A search for one gap is narrower than the piece's research, so it uses fewer searches.
+  const maxSearches = Math.min(focus ? 3 : 10, Math.max(1, Number(setting<number>(piece, "research.max_searches")) || DEFAULT_MAX_SEARCHES));
   const withSerp = !section && on(piece, "research.serp");
 
   if (body.action === "search") {
@@ -229,7 +242,8 @@ Deno.serve(handle(async (req) => {
     const context = section
       ? await contextFor(piece, ["brief", "contract", "outline"], section)
       : await contextFor(piece, ["brief", "contract", "icp"]);
-    const prompt = searchRequest(piece, context, section);
+    // A gap search also sees what is already approved, so it doesn't repeat it.
+    const prompt = searchRequest(piece, focus ? `${context}\n\n${await contextFor(piece, ["piece_items_plain"])}` : context, section, focus);
     if (estimate) {
       if (conn.provider !== "anthropic" && conn.provider !== "openai") {
         throw new UserError("Web search needs an Anthropic or OpenAI key. With this provider, add sources yourself by URL or paste.");

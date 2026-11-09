@@ -114,13 +114,12 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
   const { data, error, reload } = useLoad(async () => {
     const [contract, thread] = await Promise.all([
       supabase.from("piece_contracts").select("*").eq("piece_id", piece.id).single().then(must<Contract>),
-      supabase.from("threads").select("id").eq("piece_id", piece.id).eq("subject", "contract").single()
-        .then(must<{ id: string }>),
+      // The conversation comes with the thread, in one trip.
+      supabase.from("threads").select("id, thread_messages(*)").eq("piece_id", piece.id).eq("subject", "contract")
+        .order("created_at", { referencedTable: "thread_messages" }).single()
+        .then(must<{ id: string; thread_messages: ThreadMessage[] }>),
     ]);
-    const messages = must<ThreadMessage[]>(
-      await supabase.from("thread_messages").select("*").eq("thread_id", thread.id).order("created_at"),
-    );
-    return { contract, messages };
+    return { contract, messages: thread.thread_messages };
   }, [piece.id]);
 
   const [draft, setDraft] = useState<{ core_question: string; expectations: Expectation[] } | null>(null);

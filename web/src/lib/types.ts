@@ -304,10 +304,13 @@ export interface Section {
 export interface Analysis {
   /** Whether the scope and research still match the topic the piece started with. Missing on results from before this check. */
   alignment?: { verdict: "aligned" | "partly" | "drifted"; summary: string };
-  /** `ignored`: the writer dismissed this point as not relevant. */
-  drift?: { text: string; items: number[]; points?: number[]; ignored?: boolean }[];
-  gaps: { text: string; expert_question: string; points?: number[]; ignored?: boolean }[];
-  contract_suggestions?: { change: string; why: string; ignored?: boolean }[];
+  /** `ignored`: the writer dismissed this point as not relevant. `resolved`: a fix the writer applied settled it. */
+  drift?: { text: string; items: number[]; points?: number[]; ignored?: boolean; resolved?: boolean }[];
+  /** `researched`: how many research items a search for this gap added, still to be reviewed and re-checked. */
+  gaps: { text: string; expert_question: string; points?: number[]; ignored?: boolean; resolved?: boolean; researched?: number }[];
+  contract_suggestions?: { change: string; why: string; ignored?: boolean; resolved?: boolean }[];
+  /** Set once fixes were applied: the scope or research moved on, so this check can't propose more. Run it again for that. */
+  fixes_applied?: boolean;
   /** The ids behind the item and point numbers above, as they were when the check ran. Missing on older results. */
   item_ids?: string[];
   point_ids?: string[];
@@ -316,7 +319,7 @@ export interface Analysis {
 /** One change the AI proposed after the alignment check, with the ids the screen needs to apply it. */
 export interface FixProposal {
   id: string;
-  type: "reject_item" | "edit_point" | "remove_point" | "add_point" | "add_section";
+  type: "reject_item" | "edit_point" | "remove_point" | "add_point" | "add_section" | "research_gap";
   why: string;
   item_id?: string;
   item_text?: string;
@@ -330,6 +333,10 @@ export interface FixProposal {
   heading?: string;
   purpose?: string;
   point_ids?: string[];
+  /** The findings this change settles: "drift-0", "suggestion-1", "gap-2" (positions in the saved check). */
+  resolves?: string[];
+  /** research_gap: the gap the search is for. `text` is the search question. */
+  gap_text?: string;
 }
 
 export interface PieceLink {

@@ -142,12 +142,13 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
     reload();
   };
 
-  async function act(fn: () => Promise<void>) {
+  // `refresh: false` for actions that move to another step, where this step's own data is about to go away.
+  async function act(fn: () => Promise<void>, refresh = true) {
     setBusy(true);
     setActionError(null);
     try {
       await fn();
-      await reload();
+      if (refresh) await reload();
     } catch (err) {
       setActionError(errorMessage(err));
     } finally {
@@ -202,7 +203,7 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
                   : await supabase.rpc("complete_piece_research", { target_piece: piece.id });
                 if (err) throw err;
                 onAdvanced();
-              })}>
+              }, false)}>
               {counts.approved === 0 ? "Continue without research" : "Finish research"}
             </button>
           )}
@@ -215,7 +216,7 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
                   : await supabase.rpc("reopen_piece_research", { target_piece: piece.id });
                 if (err) throw err;
                 onAdvanced();
-              });
+              }, false);
             }}>Reopen research</button>
           )}
         </div>

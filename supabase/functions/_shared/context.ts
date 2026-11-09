@@ -153,10 +153,16 @@ Audience notes: ${piece.audience_notes || "(none)"}${
   if (blocks.includes("analysis")) {
     const { data } = await admin.from("pieces").select("analysis").eq("id", piece.id).single();
     if (data?.analysis) {
-      // Gaps and drift points the writer ignored are not shown to the AI.
+      // Findings the writer ignored, or that a fix already settled, are not shown to the AI. Each one left gets a
+      // "ref" so a fix can say which finding it answers.
       const shown = { ...data.analysis } as Record<string, unknown>;
+      const prefix: Record<string, string> = { gaps: "gap", drift: "drift", contract_suggestions: "suggestion" };
       for (const k of ["gaps", "drift", "contract_suggestions"]) {
-        if (Array.isArray(shown[k])) shown[k] = (shown[k] as { ignored?: boolean }[]).filter((x) => !x.ignored);
+        if (Array.isArray(shown[k])) {
+          shown[k] = (shown[k] as { ignored?: boolean; resolved?: boolean }[])
+            .map((x, i) => ({ ref: `${prefix[k]}-${i}`, ...x }))
+            .filter((x) => !x.ignored && !x.resolved);
+        }
       }
       parts.push(`<analysis>\n${JSON.stringify(shown, null, 1)}\n</analysis>`);
     }

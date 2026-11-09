@@ -168,7 +168,7 @@ THE ACTIONS
 - add_section: "points" lists the numbers of existing scope points that an open gap in <analysis> names and that no outline section covers; "heading" and "purpose" describe one new section that covers them and gives the gap a home. The heading is a reader-facing section title; the purpose says what the section tells the reader. Points that share a gap go in one section.
 
 EVERY PROPOSAL HAS ALL FIELDS
-Use 0 for "item" and "point", "" for "text", "heading" and "purpose", and [] for "points" when an action doesn't use them. "why" is one sentence saying what the change fixes.
+Use 0 for "item" and "point", "" for "text", "heading" and "purpose", and [] for "points" when an action doesn't use them. "why" is one sentence saying what the change fixes. "resolves" lists the "ref" values (such as "drift-0" or "suggestion-1") of the entries in <analysis> that this change fully settles, so the writer's list can drop them; list none you are unsure of, and never invent a ref. A gap is never settled by these actions.
 
 RULES
 - Every proposal must answer a specific finding in <analysis>: an entry under drift, a suggested contract change, or an open gap whose scope point has no outline section yet. Do not look for improvements of your own. Fixing a finding once settles it; do not propose a second change for the same thing.
@@ -180,7 +180,14 @@ RULES
 - Scope points are things the reader needs, in plain words, not tasks for the writer.
 - Never remove the last scope point.`;
 
-const FIX_TYPES = ["reject_item", "edit_point", "remove_point", "add_point", "add_section"] as const;
+const FIX_TYPES = ["reject_item", "edit_point", "remove_point", "add_point", "add_section", "research_gap"] as const;
+
+/** Added to the system prompt when the writer ticked "use AI to address these" for the gaps. */
+const RESEARCH_GAP_RULES = `
+
+ONE MORE ACTION FOR THIS REQUEST
+- research_gap: "text" is a short question for a web search; "resolves" holds the "ref" of the one open gap it is for. Use it only for a gap whose missing material is published knowledge a web search can find, such as how a method works or what studies and vendors report. Never use it for a gap that asks what the company itself saw, did or measured: leave that gap alone. At most one research_gap per gap. Searching adds items for the writer to review; it does not settle the gap.
+- This action may answer a gap in <analysis> even though the other rules say gaps are left alone.`;
 const analysisFixSchema = obj({
   proposals: list(obj({
     type: { type: "string", enum: [...FIX_TYPES] },
@@ -191,6 +198,7 @@ const analysisFixSchema = obj({
     heading: str,
     purpose: str,
     points: list({ type: "integer" }),
+    resolves: list(str),
   })),
 });
 
@@ -211,6 +219,10 @@ interface FixProposal {
   heading?: string;
   purpose?: string;
   point_ids?: string[];
+  /** The findings (their "ref" in <analysis>) this change settles. */
+  resolves?: string[];
+  /** research_gap: the gap the search is for. */
+  gap_text?: string;
 }
 
 function newPointId(): string {
@@ -249,28 +261,42 @@ async function prepareAnalysisFix(userId: string, body: Record<string, unknown>)
     gaps?: { points?: number[]; ignored?: boolean }[];
   };
   // Gaps the writer ignored are left alone: no section is proposed for them.
-  found.gaps = (found.gaps ?? []).filter((g) => !g.ignored);
-  found.drift = (found.drift ?? []).filter((d) => !(d as { ignored?: boolean }).ignored);
-  found.contract_suggestions = (found.contract_suggestions ?? []).filter((c) => !(c as { ignored?: boolean }).ignored);
+  // The refs a proposal may name are the positions in the stored lists, counted before anything is filtered out.
+  const validRefs = new Set<string>([
+    ...(found.gaps ?? []).map((_, i) => `gap-${i}`),
+    ...(found.drift ?? []).map((_, i) => `drift-${i}`),
+    ...(found.contract_suggestions ?? []).map((_, i) => `suggestion-${i}`),
+  ]);
+  const settled = (x: unknown) => Boolean((x as { ignored?: boolean; resolved?: boolean }).ignored || (x as { resolved?: boolean }).resolved);
+  // Gaps still open, by their ref and text, before the lists are filtered (a research_gap may only name one of these).
+  // A gap already searched for isn't searched for again until the check is run again.
+  const openGaps = new Map((found.gaps ?? []).flatMap((g, i) => (settled(g) || (g as { researched?: number }).researched
+    ? [] : [[`gap-${i}`, (g as { text?: string }).text ?? ""] as [string, string]])));
+  const withGaps = body.include_gaps === true;
+  found.gaps = (found.gaps ?? []).filter((g) => !settled(g));
+  found.drift = (found.drift ?? []).filter((d) => !settled(d));
+  found.contract_suggestions = (found.contract_suggestions ?? []).filter((c) => !settled(c));
   // A section can only fix a gap: it must cover a scope point an open gap names and no section covers yet. Once it
   // exists the point is covered, so the same fix is never proposed twice.
   const covered = new Set((secs ?? []).flatMap((s) => s.expectation_ids as string[]));
   const gapPointIds = new Set((found.gaps ?? []).flatMap((g) => g.points ?? [])
     .map((n) => points[n - 1]?.id).filter((id): id is string => Boolean(id) && !covered.has(id)));
   const nothingToFix = found.alignment?.verdict === "aligned" && !found.drift?.length && !found.contract_suggestions?.length
-    && gapPointIds.size === 0;
+    && gapPointIds.size === 0 && !(withGaps && openGaps.size > 0);
   const maxPoints = setting<string>(piece, "contract.mode") === "lite" ? 2 : 7;
   const system = (await promptSet(piece.company_id))("analysis_fix", ANALYSIS_FIX_SYSTEM)
     + (canEditScope ? "" : "\n\nThis format has no scope: do not propose edit_point, remove_point or add_point.")
-    + (canAddSections ? "" : "\n\nThis format has no outline sections: do not propose add_section, and leave heading and purpose empty.");
+    + (canAddSections ? "" : "\n\nThis format has no outline sections: do not propose add_section, and leave heading and purpose empty.")
+    + (withGaps ? RESEARCH_GAP_RULES : "");
 
-  return task<{ proposals: { type: string; why: string; item: number; point: number; text: string; heading: string; purpose: string; points: number[] }[] }>(
+  return task<{ proposals: { type: string; why: string; item: number; point: number; text: string; heading: string; purpose: string; points: number[]; resolves: string[] }[] }>(
     "analysis_fix", "reason", piece, userId, system, context, analysisFixSchema, 2500,
     async (data, cost, model) => {
       const out: FixProposal[] = [];
       const usedItems = new Set<string>();
       const usedPoints = new Set<string>();
       const sectionPoints = new Set<string>();
+      const usedGaps = new Set<string>();
       let removed = 0;
       let added = 0;
       // An "aligned" check with nothing under drift or suggestions has nothing to fix, whatever the model says.
@@ -280,11 +306,16 @@ async function prepareAnalysisFix(userId: string, body: Record<string, unknown>)
         const purpose = p.purpose.trim();
         const text = p.text.trim();
         const id = `${p.type}-${out.length + 1}`;
+        // Which findings this change settles, kept only when they are real ones.
+        // Only evidence settles a gap, and a search only adds items to review, so no proposal settles one. A
+        // research_gap names its gap here only to say which gap the search is for.
+        const named = [...new Set((p.resolves ?? []).filter((r) => validRefs.has(r)))];
+        const resolves = p.type === "research_gap" ? named : named.filter((r) => !r.startsWith("gap-"));
         if (p.type === "reject_item") {
           const it = items[p.item - 1];
           if (!it || usedItems.has(it.id)) continue;
           usedItems.add(it.id);
-          out.push({ id, type: p.type, why, item_id: it.id, item_text: it.statement });
+          out.push({ id, type: p.type, why, item_id: it.id, item_text: it.statement, resolves });
         } else if (p.type === "edit_point" || p.type === "remove_point") {
           const pt = points[p.point - 1];
           if (!canEditScope || !pt || usedPoints.has(pt.id)) continue;
@@ -292,17 +323,24 @@ async function prepareAnalysisFix(userId: string, body: Record<string, unknown>)
           if (p.type === "remove_point" && points.length - removed <= 1) continue;
           usedPoints.add(pt.id);
           if (p.type === "remove_point") removed++;
-          out.push({ id, type: p.type, why, point_id: pt.id, point_text: pt.text, ...(p.type === "edit_point" ? { text } : {}) });
+          out.push({ id, type: p.type, why, point_id: pt.id, point_text: pt.text, resolves, ...(p.type === "edit_point" ? { text } : {}) });
         } else if (p.type === "add_point") {
           if (!canEditScope || !text || points.length - removed + added >= maxPoints) continue;
           added++;
-          out.push({ id, type: p.type, why, text, new_point_id: newPointId(), ...(canAddSections && heading ? { heading, purpose } : {}) });
+          out.push({ id, type: p.type, why, text, new_point_id: newPointId(), resolves, ...(canAddSections && heading ? { heading, purpose } : {}) });
         } else if (p.type === "add_section") {
           const ids = [...new Set(p.points.map((n) => points[n - 1]?.id).filter((x): x is string => Boolean(x)))]
             .filter((x) => gapPointIds.has(x) && !sectionPoints.has(x));
           if (!canAddSections || !heading || !ids.length) continue;
           ids.forEach((x) => sectionPoints.add(x));
-          out.push({ id, type: p.type, why, heading, purpose, point_ids: ids });
+          out.push({ id, type: p.type, why, heading, purpose, point_ids: ids, resolves });
+        } else if (p.type === "research_gap") {
+          // One search per open gap, and only when the writer asked for it. Never counted as settling the gap here:
+          // the search adds items to review, and the next check says whether the gap is closed.
+          const gapRef = resolves.find((r) => openGaps.has(r) && r.startsWith("gap-"));
+          if (!withGaps || !gapRef || !text || usedGaps.has(gapRef)) continue;
+          usedGaps.add(gapRef);
+          out.push({ id, type: p.type, why, text, gap_text: openGaps.get(gapRef), resolves: [gapRef] });
         }
       }
       await logEvent(piece, userId, "analysis_fixes_proposed", { count: out.length });
