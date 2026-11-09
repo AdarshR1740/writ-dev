@@ -298,19 +298,33 @@ export interface Section {
   content_rev: number;
   /** What the section is made of, planned in the outline. */
   structure: Block[] | null;
+  /** The talking points the Writing step's prepare run worked out for the section. */
+  points?: SectionPoints | null;
   updated_at: string;
+}
+
+/** What the AI prepares for one section: heading ideas, the points to make with their evidence, and where the writer's own view is needed. */
+export interface SectionPoints {
+  titles: string[];
+  points: { point: string; direction: string; evidence: string; refs: string[]; sub_section: string }[];
+  extra_sub_sections: { heading: string; why: string }[];
+  thin: string[];
+  prepared_at: string;
 }
 
 export interface Analysis {
   /** Whether the scope and research still match the topic the piece started with. Missing on results from before this check. */
   alignment?: { verdict: "aligned" | "partly" | "drifted"; summary: string };
   /** `ignored`: the writer dismissed this point as not relevant. `resolved`: a fix the writer applied settled it. */
-  drift?: { text: string; items: number[]; points?: number[]; ignored?: boolean; resolved?: boolean }[];
+  /** `verify_note`: why a finding is still open after the check was run again on it. */
+  drift?: { text: string; items: number[]; points?: number[]; ignored?: boolean; resolved?: boolean; verify_note?: string }[];
   /** `researched`: how many research items a search for this gap added, still to be reviewed and re-checked. */
-  gaps: { text: string; expert_question: string; points?: number[]; ignored?: boolean; resolved?: boolean; researched?: number }[];
-  contract_suggestions?: { change: string; why: string; ignored?: boolean; resolved?: boolean }[];
+  gaps: { text: string; expert_question: string; points?: number[]; ignored?: boolean; resolved?: boolean; researched?: number; sectioned?: boolean; verify_note?: string }[];
+  contract_suggestions?: { change: string; why: string; ignored?: boolean; resolved?: boolean; verify_note?: string }[];
   /** Set once fixes were applied: the scope or research moved on, so this check can't propose more. Run it again for that. */
   fixes_applied?: boolean;
+  /** The writer finalized the outline step's benchmark: the check is hidden and the outline editor shown. */
+  benchmark_done?: boolean;
   /** The ids behind the item and point numbers above, as they were when the check ran. Missing on older results. */
   item_ids?: string[];
   point_ids?: string[];

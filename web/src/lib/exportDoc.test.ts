@@ -14,6 +14,24 @@ describe("export", () => {
     expect(toBlocks(piece).map((b) => b.kind)).toEqual(["h2", "p", "ul", "h3", "p", "h2", "p"]);
   });
 
+  it("reads numbered lists, #### subheads and tables", () => {
+    const rich: ExportPiece = {
+      title: "T",
+      sections: [{ heading: "H", content: "1. First\n2. Second\n\n#### Small\n\n| Tool | Cost |\n| --- | --- |\n| A | 10 |" }],
+    };
+    expect(toBlocks(rich).map((b) => b.kind)).toEqual(["h2", "ol", "h4", "table"]);
+    const html = bodyHtml(rich);
+    expect(html).toContain("<ol>");
+    expect(html).toContain("<h4>Small</h4>");
+    expect(html).toContain("<th>Tool</th>");
+    expect(html).toContain("<td>10</td>");
+    const md = markdown(rich);
+    expect(md).toContain("1. First");
+    expect(md).toContain("#### Small");
+    expect(md).toContain("| Tool | Cost |");
+    expect(md).toContain("| --- | --- |");
+  });
+
   it("doesn't repeat the title for a single section headed like the piece", () => {
     const one = { title: "Why twins stall", sections: [{ heading: "Why twins stall", content: "Text." }] };
     expect(toBlocks(one)).toEqual([{ kind: "p", text: "Text." }]);
@@ -24,6 +42,13 @@ describe("export", () => {
     expect(inlineHtml("[x](javascript:alert(1))")).not.toContain("<a");
     expect(inlineHtml("[x](https://a.b/c)")).toBe('<a href="https://a.b/c">x</a>');
     expect(inlineHtml("**bold** and *it*")).toBe("<strong>bold</strong> and <em>it</em>");
+  });
+
+  it("reads the editor's backslash escapes, link addresses with brackets, and escaped pipes", () => {
+    expect(inlineHtml("Use snake\\_case and 2\\*3 and 4\\*5.")).toBe("Use snake_case and 2*3 and 4*5.");
+    expect(inlineHtml("See [the page](https://en.wikipedia.org/wiki/Foo_(bar)) now.")).toBe('See <a href="https://en.wikipedia.org/wiki/Foo_(bar)">the page</a> now.');
+    const piece2: ExportPiece = { title: "T", sections: [{ heading: "H", content: "| A | b \\| c |\n| --- | --- |\n| 1 | 2 |" }] };
+    expect(toBlocks(piece2)[1]).toEqual({ kind: "table", rows: [["A", "b | c"], ["1", "2"]] });
   });
 
   it("builds body HTML with sources and the disclosure line", () => {

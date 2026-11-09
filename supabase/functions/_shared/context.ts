@@ -73,6 +73,8 @@ export interface SectionRow {
   ai_draft: string | null;
   content_rev: number;
   structure: { type: string; note: string }[] | null;
+  /** What the Writing step's prepare run worked out for the section (talking points with their evidence). */
+  points?: { points: { point: string; direction: string; evidence: string; refs: string[]; sub_section: string }[] } | null;
 }
 
 export async function loadSection(sectionId: string): Promise<SectionRow> {
@@ -92,12 +94,13 @@ export async function approvedItems(pieceId: string, sectionId?: string) {
   return (data ?? []).map((r, i) => {
     const src = Array.isArray(r.sources) ? r.sources[0] : r.sources;
     return { n: i + 1, id: r.id as string, statement: r.statement as string, quote: r.quote as string,
-      source_type: r.source_type as string, source: (src?.title as string) || (src?.url as string) || "" };
+      source_type: r.source_type as string, source: (src?.title as string) || (src?.url as string) || "",
+      url: (src?.url as string) || "" };
   });
 }
 
 function itemsText(items: Awaited<ReturnType<typeof approvedItems>>): string {
-  return items.map((i) => `[${i.n}] (${i.source_type}${i.source ? `; ${i.source}` : ""}) ${i.statement}`).join("\n");
+  return items.map((i) => `[${i.n}] (${i.source_type}${i.source ? `; ${i.source}` : ""}) ${i.statement}${i.url ? `\n    url: ${i.url}` : ""}`).join("\n");
 }
 
 export async function contextFor(piece: Piece, blocks: Block[], section?: SectionRow): Promise<string> {

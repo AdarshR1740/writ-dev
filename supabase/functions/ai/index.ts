@@ -26,7 +26,7 @@ import {
 const MAX_INPUT_CHARS = 400_000;
 
 import type { Prepared } from "./prepared.ts";
-import { applySeoFix, WRITING_TASKS } from "./writing.ts";
+import { applySeoFix, logRevision, WRITING_TASKS } from "./writing.ts";
 import { MEMORY_TASKS } from "./memory.ts";
 import { promptCatalog } from "./catalog.ts";
 import { promptSet } from "../_shared/prompt-overrides.ts";
@@ -215,6 +215,8 @@ Deno.serve(handle(async (req) => {
   }
   // Applies one accepted SEO/GEO edit to a section. No model call, no cost.
   if (body.task === "seo_fix_apply") return json(await applySeoFix(user.id, body));
+  // Records that AI-suggested revisions were accepted in a section. No model call, no cost.
+  if (body.task === "section_revise_log") return json(await logRevision(user.id, body));
   const prepare = TASKS[String(body.task ?? "")];
   if (!prepare) throw new UserError("Unknown task.");
   const prepared = await prepare(user.id, body);

@@ -312,6 +312,24 @@ details.notes-strip { border: 1px solid var(--rule); border-radius: var(--radius
 details.notes-strip summary { cursor: pointer; font-weight: 500; }
 details.notes-strip[open] summary { margin-bottom: 6px; }
 
+/* The sidebar can shrink to a rail of icons. */
+.brand-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rail-link {
+  position: relative; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; text-decoration: none; flex: none;
+}
+.rail-link:hover { background: var(--sunken); color: var(--ink); }
+.rail-link.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.rail-link.rail-primary { background: var(--pencil-soft); color: var(--pencil); }
+.rail-link.rail-primary.active { background: var(--pencil); color: var(--surface); }
+.rail-link:focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
+.rail-small { width: 30px; height: 30px; }
+.rail-badge { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--flag); }
+.sidebar.is-collapsed { padding: 14px 8px; align-items: center; gap: 14px; }
+.rail-links { display: grid; gap: 4px; }
+.rail-foot { margin-top: auto; }
+.shell.collapsed { grid-template-columns: 64px 1fr; }
+
 .mobile-bar { display: none; }
 
 @media (max-width: 860px) {
@@ -425,6 +443,18 @@ details.notes-strip[open] summary { margin-bottom: 6px; }
 .finding p { margin: 0; }
 .finding.is-ignored { opacity: 0.65; }
 .finding-actions { gap: 8px; }
+.applying { display: grid; justify-items: center; gap: 8px; padding: 28px 12px; text-align: center; }
+.applying-ring { position: relative; width: 64px; height: 64px; border-radius: 50%; border: 5px solid var(--rule); border-top-color: var(--pencil); animation: applying-spin 0.9s linear infinite; }
+.applying-ring span { position: absolute; inset: 16px; border-radius: 50%; background: var(--pencil); opacity: 0.85; animation: applying-pulse 1.8s ease-in-out infinite; }
+@keyframes applying-spin { to { transform: rotate(360deg); } }
+@keyframes applying-pulse { 0%, 100% { transform: scale(0.7); opacity: 0.4; } 50% { transform: scale(1); opacity: 0.9; } }
+@media (prefers-reduced-motion: reduce) { .applying-ring { animation-duration: 3s; } .applying-ring span { animation: none; } }
+.proposal.is-off { opacity: 0.6; }
+.proposal-title { font-weight: 600; }
+.proposal-title.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.proposal-why { padding-top: 2px; }
+.apply-bar { position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 0; margin-top: 4px; background: var(--surface); border-top: 1px solid var(--rule); }
+.finalize-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
 .modal-footer { position: sticky; bottom: -1px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 0 2px; background: var(--surface); border-top: 1px solid var(--rule); }
 .finding-top { gap: 8px; align-items: center; flex-wrap: nowrap; }
 .fix-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -653,21 +683,22 @@ table.plain td { padding: 10px; border-bottom: 1px solid var(--rule); vertical-a
 .stage.current .stage-n { border-color: var(--pencil); color: var(--pencil); }
 
 ol.expectations { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: exp; }
-ol.expectations li {
+ol.expectations > li {
   counter-increment: exp;
   display: grid;
   grid-template-columns: 26px 1fr;
   column-gap: 8px;
   row-gap: 2px;
 }
-ol.expectations li::before {
+/* Only the items of this list are numbered, not the lists nested inside them (a section's sub-sections). */
+ol.expectations > li::before {
   content: counter(exp);
   font: 500 13px var(--font-mono);
   color: var(--faint);
   padding-top: 10px;
   text-align: right;
 }
-ol.expectations li > * { grid-column: 2; }
+ol.expectations > li > * { grid-column: 2; }
 ol.expectations li textarea { min-height: 56px; font: 15px/1.5 var(--font-doc); }
 
 /* Conversation with the AI: wider rail, who-said-what labels, readable line length */
@@ -1026,8 +1057,112 @@ button.card.pick.picked { border-color: var(--pencil); box-shadow: inset 0 0 0 1
 details.structure { border-top: 1px dashed var(--rule); padding-top: 6px; }
 details.structure > summary { cursor: pointer; color: var(--muted); }
 ol.structure-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
-ol.structure-list li { display: grid; grid-template-columns: 11rem 1fr auto; gap: 6px; align-items: center; }
-@media (max-width: 720px) { ol.structure-list li { grid-template-columns: 1fr; } }
+ol.structure-list li { display: grid; grid-template-columns: 11rem 1fr auto; gap: 6px; align-items: center; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
+ol.structure-list li:last-child { border-bottom: 0; }
+ol.structure-list li > .fp { grid-column: 1; grid-row: 1; }
+.fp-compact .fp-button { padding: 6px 10px; font-size: 13.5px; font-weight: 500; }
+.fp-compact .fp-name { font-weight: 500; }
+.fp-desc { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+ol.structure-list li > textarea.block-note { grid-column: 1 / -1; grid-row: 2; min-height: 0; width: 100%; resize: vertical; font: 14.5px/1.5 var(--font-ui); field-sizing: content; }
+ol.structure-list li > .block-controls { grid-column: 3; grid-row: 1; }
+/* Outline sections as cards; their sub-sections are quieter and indented. */
+/* Writing: a section's talking points beside the editor (a wider rail), and the run that prepares the sections. */
+.workbench:has(.points-list) { grid-template-columns: minmax(0, 1fr) 400px; }
+@media (max-width: 1100px) { .workbench:has(.points-list) { grid-template-columns: 1fr; } }
+ol.points-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: pt; }
+ol.points-list > li { counter-increment: pt; display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+ol.points-list > li > strong::before { content: counter(pt) ". "; color: var(--faint); font-weight: 500; }
+ol.points-list p { margin: 0; }
+.points-evidence { padding-left: 10px; border-left: 2px solid var(--rule-strong); color: var(--ink); }
+.points-evidence .tag { margin-left: 4px; text-decoration: none; }
+.points-titles { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.points-titles li { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.points-extra { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.revise-scopes { display: grid; gap: 8px; }
+.revise-scope { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.revise-scope.on { border-color: var(--pencil); background: var(--pencil-soft); }
+.revise-scope.off { opacity: 0.55; cursor: default; }
+.revise-scope input { width: auto; margin: 3px 0 0; }
+/* Writing: a word-processor-style editor. The section's own H2 sits above it; the text keeps headings, lists, tables,
+   bold, italic and links as they will look. */
+.section-h2 { display: flex; align-items: center; gap: 10px; padding: 16px 20px 2px; }
+.section-h2-tag { font: 600 11px var(--font-mono); color: var(--faint); border: 1px solid var(--rule); border-radius: 4px; padding: 1px 5px; flex: none; }
+.section-h2 input { flex: 1; min-width: 0; font: 700 24px/1.25 var(--font-doc); border: 1px solid transparent; background: transparent; padding: 6px 8px; border-radius: 6px; }
+.section-h2 input:hover:not(:read-only) { border-color: var(--rule); }
+.rich-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 6px 14px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: var(--surface); position: sticky; top: 0; z-index: 3; }
+.rich-tool { height: 30px; min-width: 32px; padding: 0 8px; border: 0; background: none; border-radius: 6px; color: var(--ink); font: 500 13px var(--font-ui); cursor: pointer; }
+.rich-tool:hover:not(:disabled) { background: var(--sunken); }
+.rich-tool.on { background: var(--pencil-soft); color: var(--pencil); }
+.rich-tool:disabled { opacity: 0.4; cursor: default; }
+.rich-tool.danger { color: var(--flag); }
+.rich-sep { width: 1px; height: 18px; background: var(--rule); margin: 0 6px; }
+.rich-link-box { display: flex; gap: 8px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--rule); background: var(--sunken); }
+.rich-link-box input { flex: 1; min-width: 0; }
+.rich-body .ProseMirror { min-height: 460px; padding: 18px 20px 32px; outline: none; font: 16px/1.65 var(--font-doc); color: var(--ink); }
+.rich-body .ProseMirror > * + * { margin-top: 0.9em; }
+.rich-body .ProseMirror p { margin: 0; }
+.rich-body .ProseMirror h3, .linked-text h3 { font: 700 20px/1.3 var(--font-doc); margin: 1.2em 0 0.3em; }
+.rich-body .ProseMirror h4, .linked-text h4 { font: 600 17px/1.3 var(--font-doc); margin: 1em 0 0.3em; }
+.rich-body .ProseMirror h2 { font: 700 22px/1.3 var(--font-doc); margin: 1.2em 0 0.3em; }
+.rich-body .ProseMirror ul, .rich-body .ProseMirror ol, .linked-text ul, .linked-text ol { padding-left: 1.5em; margin: 0; }
+.rich-body .ProseMirror li > p { margin: 0; }
+.rich-body .ProseMirror a, .linked-text a { color: var(--pencil); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.rich-body .ProseMirror table, .linked-text table { border-collapse: collapse; width: 100%; table-layout: fixed; font: 15px/1.5 var(--font-ui); }
+.rich-body .ProseMirror th, .rich-body .ProseMirror td, .linked-text th, .linked-text td { border: 1px solid var(--rule-strong); padding: 6px 10px; vertical-align: top; position: relative; text-align: left; }
+.rich-body .ProseMirror th, .linked-text th { background: var(--sunken); font-weight: 600; }
+.rich-body .ProseMirror .selectedCell::after { content: ""; position: absolute; inset: 0; background: var(--pencil-soft); pointer-events: none; }
+.rich-body .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--faint); float: left; height: 0; pointer-events: none; }
+.rich.is-readonly .ProseMirror { opacity: 0.95; }
+.linked-text > * + * { margin-top: 0.9em; }
+/* Writing: links can be opened, and the section's "owes" list is folded away. */
+.linked-text p { font: 16px/1.65 var(--font-doc); margin: 0; white-space: pre-wrap; }
+.source-links { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); padding: 12px 16px; display: grid; gap: 8px; }
+.source-links > summary { cursor: pointer; }
+.source-links ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.source-links li { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--rule); }
+.owes-details > summary { cursor: pointer; }
+.owes-details[open] > summary { margin-bottom: 6px; }
+.start-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 720px) { .start-choices { grid-template-columns: 1fr; } }
+.start-choice { display: grid; gap: 10px; align-content: start; padding: 16px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.start-choice .btn { justify-self: start; }
+.start-choice p { margin: 0; }
+.full-draft { padding: 28px 32px; }
+.full-draft h1 { font: 700 26px var(--font-doc); margin: 0; }
+.full-draft h2 { font: 600 19px var(--font-doc); margin: 0; }
+.full-draft p { font: 16px/1.65 var(--font-doc); }
+.prepare-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.prepare-steps li { display: flex; gap: 10px; align-items: baseline; color: var(--muted); }
+.prepare-steps li.done { color: var(--ink); }
+.prepare-steps li.doing { color: var(--ink); font-weight: 600; }
+.prepare-mark { width: 1.2em; text-align: center; flex: none; }
+.prepare-steps li.doing .prepare-mark { color: var(--pencil); }
+/* A toolbar in a document header wraps under the title on a narrow screen instead of squeezing the buttons. */
+.doc-surface header { flex-wrap: wrap; row-gap: 8px; }
+.title-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 720px) { .title-fields { grid-template-columns: 1fr; } }
+.outline-list { gap: 24px; }
+.outline-card { display: grid; gap: 14px; padding: 18px 20px; border: 1px solid var(--rule-strong); border-radius: 10px; background: var(--surface); min-width: 0; }
+.section-head { display: flex; align-items: center; gap: 12px; }
+.section-head .heading-input { flex: 1 1 auto; min-width: 0; }
+/* The heading and the purpose read as text until you point at them; the card is the only frame. */
+.outline-card .heading-input, .outline-card .purpose-input { border-color: transparent; background: transparent; padding-left: 4px; padding-right: 4px; }
+.outline-card .heading-input:hover, .outline-card .purpose-input:hover:not(:disabled) { border-color: var(--rule); }
+.outline-card textarea.purpose-input { min-height: 0; resize: none; font: 15px/1.55 var(--font-doc); field-sizing: content; width: 100%; }
+.outline-card .owed { gap: 8px; }
+.outline-card .chip:not(.on) { background: transparent; border-color: var(--rule); color: var(--muted); }
+.outline-card details.structure { border-top: 1px solid var(--rule); padding-top: 14px; }
+.outline-card details.structure > summary { display: flex; gap: 8px; align-items: baseline; min-width: 0; cursor: pointer; list-style: none; }
+.outline-card details.structure > summary::-webkit-details-marker { display: none; }
+.outline-card details.structure > summary::before { content: "▸"; flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+.outline-card details.structure[open] > summary::before { content: "▾"; }
+.outline-card details.structure[open] > summary { margin-bottom: 4px; }
+.outline-card .structure-title { font-weight: 600; flex: 0 0 auto; color: var(--ink); }
+.outline-card details.structure > summary .clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outline-card ol.structure-list { margin-left: 12px; padding-left: 12px; border-left: 2px solid var(--rule); }
+.outline-card ol.structure-list li { border-bottom: 0; padding-bottom: 4px; }
+.outline-card ol.structure-list li > textarea.block-note { font-size: 13.5px; background: var(--paper, transparent); }
+@media (max-width: 720px) { ol.structure-list li { grid-template-columns: 1fr auto; } ol.structure-list li > .block-controls { grid-column: 2; } }
 
 /* Write: one search box, an In progress / Done switch, and the rest behind "Filters" */
 .list-bar { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; }

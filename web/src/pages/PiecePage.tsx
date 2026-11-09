@@ -21,6 +21,8 @@ export function PiecePage() {
   );
   const [view, setView] = useState<Stage | null>(null);
   const [revising, setRevising] = useState(false);
+  // The Writing step is running something long (preparing the sections, or the AI writing them): stay on this step.
+  const [runBusy, setRunBusy] = useState(false);
   // Writing is complete when every section is marked written; sign-off then takes over as the current step.
   const { data: sectionStates, reload: reloadSections } = useLoad(
     async () => must<{ status: string }[]>(await supabase.from("piece_sections").select("status").eq("piece_id", pieceId!)),
@@ -82,7 +84,7 @@ export function PiecePage() {
               <button
                 type="button"
                 className={`stage ${state}${shown === s.key ? " shown" : ""}`}
-                disabled={state === "later"}
+                disabled={state === "later" || (runBusy && s.key !== shown)}
                 aria-current={shown === s.key ? "step" : undefined}
                 ref={shown === s.key ? (el) => el?.scrollIntoView({ block: "nearest", inline: "nearest" }) : undefined}
                 onClick={() => setView(s.key)}
@@ -98,7 +100,7 @@ export function PiecePage() {
       {shown === "contract" && <ContractStep piece={piece} recipe={recipe} onAdvanced={() => { setView(null); reload(); }} />}
       {shown === "research" && <ResearchStep piece={piece} onAdvanced={() => { setView(null); reload(); }} />}
       {shown === "outline" && <OutlineStep piece={piece} onChanged={reload} onAdvanced={() => { setView(null); reload(); }} />}
-      {shown === "writing" && <WritingStep piece={piece} onChanged={() => { reload(); reloadSections(); }} onContinue={() => setView("done")} finishLabel={recipe.signoff.required ? "Sign-off" : "Finish"} />}
+      {shown === "writing" && <WritingStep piece={piece} onChanged={() => { reload(); reloadSections(); }} onBusyChange={setRunBusy} onContinue={() => setView("done")} finishLabel={recipe.signoff.required ? "Sign-off" : "Finish"} />}
       {shown === "done" && <SignOffStep piece={piece} onChanged={reload} />}
     </div>
   );

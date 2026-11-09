@@ -108,9 +108,18 @@ export function AiAction<T>({
   reason,
   payloads,
   merge,
+  onBusyChange,
+  small = false,
+  reasonAsTitle = false,
 }: {
   label: string;
   payload: Record<string, unknown>;
+  /** A smaller button, for toolbars. */
+  small?: boolean;
+  /** Show the reason as a tooltip on the disabled button instead of as text beside it. */
+  reasonAsTitle?: boolean;
+  /** Told when the action starts and stops, so the screen can show its own animation while it runs. */
+  onBusyChange?: (busy: boolean) => void;
   disabled?: boolean;
   /** Shown beside the button while it's disabled, so it never looks broken. */
   reason?: string;
@@ -129,6 +138,7 @@ export function AiAction<T>({
 
   async function run() {
     setBusy(true);
+    onBusyChange?.(true);
     setError(null);
     try {
       let result: T;
@@ -148,16 +158,18 @@ export function AiAction<T>({
     } finally {
       setBusy(false);
       setProgress(null);
+      onBusyChange?.(false);
     }
   }
 
   return (
     <div className="stack" style={{ gap: 8 }}>
       <div className="row" style={{ gap: 10 }}>
-        <button type="button" className={`btn${primary ? " btn-primary" : ""}`} onClick={run} disabled={disabled || busy}>
+        <button type="button" className={`btn${small ? " btn-small" : ""}${primary ? " btn-primary" : ""}`} onClick={run} disabled={disabled || busy}
+          title={disabled && reason && reasonAsTitle ? reason : undefined}>
           {busy ? `Working…${progress ? ` ${progress}` : ""}` : label}
         </button>
-        {disabled && reason && <span className="small muted disabled-reason">{reason}</span>}
+        {disabled && reason && !reasonAsTitle && <span className="small muted disabled-reason">{reason}</span>}
       </div>
       <ErrorText>{error}</ErrorText>
     </div>

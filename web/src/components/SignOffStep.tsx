@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { MemoryPanel } from "./MemoryPanel";
+import { MarkdownView } from "./Links";
 import { ExportPanel } from "./ExportPanel";
 import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
@@ -298,18 +299,8 @@ function CustomerApproval({ piece, onRecorded }: { piece: Piece; onRecorded: () 
   );
 }
 
-/** Plain-text Markdown shown as formatted text: paragraphs, ### subheads and - lists. No HTML is injected. */
+/** A section's Markdown shown as formatted text: headings, lists, tables, bold, italic and links. No HTML is injected. */
 function Prose({ text }: { text: string }) {
   if (!text) return <p className="faint">Not written yet.</p>;
-  return (
-    <>
-      {text.split(/\n{2,}/).map((block, i) => {
-        const lines = block.split("\n");
-        if (lines.every((l) => /^\s*[-*] /.test(l))) return <ul key={i}>{lines.map((l, j) => <li key={j}>{l.replace(/^\s*[-*] /, "")}</li>)}</ul>;
-        const head = block.match(/^#{2,4} (.*)$/);
-        if (head && lines.length === 1) return <h3 key={i}>{head[1]}</h3>;
-        return <p key={i}>{block}</p>;
-      })}
-    </>
-  );
+  return <MarkdownView text={text} />;
 }

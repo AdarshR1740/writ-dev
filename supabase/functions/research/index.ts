@@ -33,9 +33,19 @@ const DEFAULT_MAX_SEARCHES = 6;
 const MAX_SOURCE_CHARS = 300_000;
 
 /** The user message for a search: states the subject outright so a small model can't drift off it. */
-function searchRequest(piece: Piece, context: string, section: SectionRow | null, focus = ""): string {
+function searchRequest(piece: Piece, context: string, section: SectionRow | null, focus = "", auto = false): string {
   const subject = piece.topic?.trim() || piece.title;
   const keyword = piece.primary_keyword ? ` (primary keyword: "${piece.primary_keyword}")` : "";
+  if (auto && section) {
+    // Preparing a section for the writer: material that makes the section a strong source, drawn from its sub-sections.
+    return `${context}
+
+TASK
+Prepare one section of the piece "${piece.title}" (subject: "${subject}"${keyword}) for the writer.
+Section: "${section.heading}"${section.purpose ? `, which should cover: ${section.purpose}` : ""}.
+Find published material that makes this section a strong source to write from: facts and figures, named examples, expert or practitioner views, and anything that backs the planned sub-sections. Skip what the approved research already says. Every search must be about "${subject}" and this section.
+Return at most 6 findings, one per source, best first. Weigh each source: prefer pages that answer the section directly and are credible and current. Fewer than 6 is fine; never pad the list.`;
+  }
   if (focus) {
     // A gap the alignment check found: material the approved research doesn't have. Search for that and nothing else.
     return `${context}
@@ -43,7 +53,8 @@ function searchRequest(piece: Piece, context: string, section: SectionRow | null
 TASK
 The piece "${piece.title}" (subject: "${subject}"${keyword}) has been researched, but the approved research is missing this:
 "${focus}"
-Search only for published material that fills that gap. Every search must be about "${subject}" and that gap. Skip anything the approved research already says.`;
+Search only for published material that fills that gap. Every search must be about "${subject}" and that gap. Skip anything the approved research already says.
+Return at most 3 findings, one per source, with the one that fills the gap best first. Weigh each source: prefer material that answers the gap directly and comes from a credible, current page. Fewer than 3 is fine; never pad the list.`;
   }
   if (section) {
     return `${context}
@@ -108,8 +119,20 @@ async function storeFindings(
   piece: Piece,
   userId: string,
   findings: Finding[],
-  opts: { origin: "search" | "url" | "paste"; sourceId?: string; ages?: Map<string, string>; section?: SectionRow | null },
+  opts: {
+    origin: "search" | "url" | "paste";
+    sourceId?: string;
+    ages?: Map<string, string>;
+    section?: SectionRow | null;
+    /** Keep only the first N findings (the model lists the best first). */
+    limit?: number;
+    /** Store the items as already approved, for a gap search whose results are not reviewed one by one. */
+    approved?: boolean;
+    /** Filled with the ids of the items created, so the caller can report them. */
+    collectIds?: string[];
+  },
 ): Promise<number> {
+  if (opts.limit) findings = findings.slice(0, opts.limit);
   if (!findings.length) return 0;
   const sourceIds = new Map<string, string>();
   if (opts.sourceId) {
@@ -135,7 +158,7 @@ async function storeFindings(
       sourceIds.set(f.url, data.id);
     }
   }
-  const { error } = await admin.from("research_items").insert(findings.map((f) => ({
+  const { data: inserted, error } = await admin.from("research_items").insert(findings.map((f) => ({
     company_id: piece.company_id,
     piece_id: piece.id,
     scope: opts.section ? "section" : "piece",
@@ -146,8 +169,10 @@ async function storeFindings(
     source_type: f.sourceType,
     secondary: f.secondary,
     quote_status: f.quoteStatus,
-  })));
+    ...(opts.approved ? { status: "approved", reviewed_by: userId, reviewed_at: new Date().toISOString() } : {}),
+  }))).select("id");
   if (error) throw error;
+  opts.collectIds?.push(...(inserted ?? []).map((r) => r.id as string));
   return findings.length;
 }
 
@@ -211,8 +236,13 @@ Deno.serve(handle(async (req) => {
   const piece = await loadPiece(section ? section.piece_id : String(body.piece_id ?? ""));
   // Set only for a search about one gap (piece level, search action).
   const focus = !section && body.action === "search" ? String(body.focus ?? "").trim().slice(0, 600) : "";
+  // A section search run by the Writing step's prepare run: fewer, better sources, stored as approved.
+  const auto = Boolean(section) && body.action === "search" && body.auto === true;
   await requireRole(user.id, piece.company_id, "member");
-  if (section) {
+  if (section && auto) {
+    // Preparing a section automatically (the Writing step's "prepare" run): any section not written yet, in any order.
+    if (section.status !== "research" && section.status !== "brief") throw new UserError("This section is already being written.");
+  } else if (section) {
     if (section.status !== "research") throw new UserError("This section's research is already finished.");
     const { data: p } = await admin.from("pieces").select("section_timing").eq("id", piece.id).single();
     if (p?.section_timing === "just_in_time") {
@@ -227,12 +257,21 @@ Deno.serve(handle(async (req) => {
   const { data: contract } = await admin.from("piece_contracts").select("confirmed_at").eq("piece_id", piece.id)
     .single();
   if (!contract?.confirmed_at) throw new UserError("Confirm the reader contract before researching.");
+  if (auto && section) {
+    // A retry after the points step failed must not search (and pay) again: the section already has its sources.
+    const { count } = await admin.from("research_items").select("id", { count: "exact", head: true })
+      .eq("piece_id", piece.id).eq("scope", "section").eq("section_key", section.id).eq("status", "approved");
+    if ((count ?? 0) > 0) return json({ added: 0, item_ids: [], skipped: true });
+  }
   const conn = await connect(piece.company_id, "research");
   const prompts = await promptSet(piece.company_id);
   const estimate = body.mode === "estimate";
 
   // A search for one gap is narrower than the piece's research, so it uses fewer searches.
-  const maxSearches = Math.min(focus ? 3 : 10, Math.max(1, Number(setting<number>(piece, "research.max_searches")) || DEFAULT_MAX_SEARCHES));
+  const maxSearches = Math.min(focus ? 3 : auto ? 4 : 10, Math.max(1, Number(setting<number>(piece, "research.max_searches")) || DEFAULT_MAX_SEARCHES));
+  // Searches that keep only a few best sources and approve them on the spot (a gap, or a section being prepared).
+  const quick = Boolean(focus) || auto;
+  const quickLimit = focus ? 3 : 6;
   const withSerp = !section && on(piece, "research.serp");
 
   if (body.action === "search") {
@@ -243,7 +282,7 @@ Deno.serve(handle(async (req) => {
       ? await contextFor(piece, ["brief", "contract", "outline"], section)
       : await contextFor(piece, ["brief", "contract", "icp"]);
     // A gap search also sees what is already approved, so it doesn't repeat it.
-    const prompt = searchRequest(piece, focus ? `${context}\n\n${await contextFor(piece, ["piece_items_plain"])}` : context, section, focus);
+    const prompt = searchRequest(piece, quick ? `${context}\n\n${await contextFor(piece, ["piece_items_plain"])}` : context, section, focus, auto);
     if (estimate) {
       if (conn.provider !== "anthropic" && conn.provider !== "openai") {
         throw new UserError("Web search needs an Anthropic or OpenAI key. With this provider, add sources yourself by URL or paste.");
@@ -270,21 +309,28 @@ Deno.serve(handle(async (req) => {
         effort: "medium",
       });
       const findings = parseFindings(r.content as never);
-      const added = await storeFindings(piece, user.id, findings, { origin: "search", ages: pageAges(r.content as never), section });
+      const itemIds: string[] = [];
+      const added = await storeFindings(piece, user.id, findings, {
+        origin: "search", ages: pageAges(r.content as never), section, collectIds: itemIds,
+        ...(quick ? { limit: quickLimit, approved: true } : {}),
+      });
       const cost = await recordUsage(piece, user.id, "research_search", conn.model, conn.provider, r);
       await logEvent(piece, user.id, "research_searched", { items: added, searches: r.searches });
-      return json({ added, searches: r.searches, cost_usd: cost, model: conn.model });
+      return json({ added, item_ids: itemIds, searches: r.searches, cost_usd: cost, model: conn.model });
     }
     if (conn.provider === "openai") {
       const r = await callOpenAISearch(conn, searchSystem(withSerp, true, maxSearches, prompts), prompt, maxSearches);
-      const findings = parseQuotedFindings(r.text);
-      const pages = await verifyQuotes(findings);
+      const parsed = parseQuotedFindings(r.text);
+      const pages = await verifyQuotes(parsed);
       const ages = new Map([...pages].filter(([, p]) => p.published).map(([u, p]) => [u, p.published]));
-      const added = await storeFindings(piece, user.id, findings, { origin: "search", ages, section });
+      // A gap search keeps the best three, and with no one reviewing them, only ones whose quote was found on the page.
+      const findings = quick ? parsed.filter((f) => f.quoteStatus !== "unverified") : parsed;
+      const itemIds: string[] = [];
+      const added = await storeFindings(piece, user.id, findings, { origin: "search", ages, section, collectIds: itemIds, ...(quick ? { limit: quickLimit, approved: true } : {}) });
       const cost = await recordUsage(piece, user.id, "research_search", conn.model, conn.provider, r);
       const unverified = findings.filter((f) => f.quoteStatus === "unverified").length;
       await logEvent(piece, user.id, "research_searched", { items: added, searches: r.searches, unverified });
-      return json({ added, unverified, searches: r.searches, cost_usd: cost, model: conn.model });
+      return json({ added, item_ids: itemIds, unverified, searches: r.searches, cost_usd: cost, model: conn.model });
     }
     throw new UserError(
       "Web search needs an Anthropic or OpenAI key. With this provider, add sources yourself by URL or paste; their quotes are still checked.",

@@ -6,7 +6,8 @@ import { AiAction, CopyButton, ErrorText } from "./ui";
 
 export interface SeoGeoResult {
   checked_at: string;
-  checks: { area: "seo" | "geo"; check: string; label: string; status: "fine" | "improve" | "n/a"; evidence: string; fix: string }[];
+  /** `ignored`: the writer dismissed this issue, so Fix it and the re-check leave it alone. */
+  checks: { area: "seo" | "geo"; check: string; label: string; status: "fine" | "improve" | "n/a"; evidence: string; fix: string; ignored?: boolean }[];
   meta_title?: string;
   meta_description?: string;
 }
@@ -14,6 +15,11 @@ export interface SeoGeoResult {
 /** A revised outline the AI proposes to close the gaps. The writer reviews and saves it. */
 export interface OutlineFix {
   reply: string;
+  /** What the small changes did, counted. Nothing is ever removed. */
+  summary?: { edited: number; added: number; moved: number; blocks: number };
+  /** A new working title, when the fix changes it. */
+  title?: string;
+  /** The whole outline after the changes: every section it had, with the changes made. */
   sections: { heading: string; purpose: string; expectations: number[]; blocks: Block[] }[];
 }
 
@@ -28,8 +34,18 @@ interface TextEdit {
 }
 
 /** SEO and GEO as a checklist with evidence and fixes. No score to chase. */
-export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, onFixOutline, fixBlocked, onEdited }: {
+export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, onFixOutline, fixBlocked, onEdited, hideRun, onClose, onIgnore, working, onFixBusy }: {
   piece: Piece;
+  /** Outline scope: what Fix it is doing right now. While set, the panel shows an animation in place of the issues. */
+  working?: string | null;
+  /** Outline scope: told when the AI starts and stops working out the fix. */
+  onFixBusy?: (busy: boolean) => void;
+  /** Outline scope: ignore (or bring back) one issue by its check name. */
+  onIgnore?: (check: string, ignored: boolean) => void;
+  /** Outline scope: closes the panel (it is shown only after the writer runs the checks). */
+  onClose?: () => void;
+  /** The button that runs the check lives elsewhere (the outline puts it in its header), so don't draw one here. */
+  hideRun?: boolean;
   scope: "outline" | "final";
   result: SeoGeoResult | null;
   disabled?: boolean;
@@ -80,6 +96,78 @@ export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, on
     onEdited?.();
   }
 
+  // On the outline the panel shows only what needs improving, with Fix it; what passed is one closed line.
+  if (scope === "outline" && result) {
+    const issues = result.checks.filter((c) => c.status === "improve" && !c.ignored);
+    const ignoredIssues = result.checks.filter((c) => c.status === "improve" && c.ignored);
+    const passed = result.checks.filter((c) => c.status === "fine");
+    return (
+      <section className="card stack" aria-label="SEO and GEO check" style={{ gap: 14 }}>
+        <div className="row" style={{ alignItems: "center" }}>
+          <div className="check-head">
+            <strong>Search &amp; answer engines</strong>
+            <span className="small muted">
+              {issues.length > 0 ? `${issues.length} to improve` : "Nothing to improve."} · Checked {formatDate(result.checked_at)}
+            </span>
+          </div>
+          <span className="spacer" />
+          {issues.length > 0 && onFixOutline && (
+            <AiAction<OutlineFix> label="Fix it" primary disabled={disabled || Boolean(fixBlocked) || Boolean(working)} reason={fixBlocked ?? reason}
+              payload={{ task: "seo_fix", piece_id: piece.id, scope }} onDone={onFixOutline} onBusyChange={onFixBusy} />
+          )}
+          {onClose && <button type="button" className="btn btn-quiet btn-small" disabled={Boolean(working)} onClick={onClose}>Close</button>}
+        </div>
+        {working && (
+          <div className="applying" role="status" aria-live="polite">
+            <div className="applying-ring" aria-hidden="true"><span /></div>
+            <strong>{working}</strong>
+            <span className="small muted">This can take a minute.</span>
+          </div>
+        )}
+        {!working && issues.length > 0 && (
+          <ul className="finding-list">
+            {issues.map((c) => (
+              <li key={c.check} className="finding">
+                <div className="row finding-top">
+                  <span className="tag">{c.area === "seo" ? "SEO" : "GEO"}</span>
+                  <strong>{c.label}</strong>
+                  <span className="spacer" />
+                  {onIgnore && <button type="button" className="btn btn-quiet btn-small" onClick={() => onIgnore(c.check, true)}>Ignore</button>}
+                </div>
+                {c.evidence && <p className="small muted" style={{ margin: 0 }}>{c.evidence}</p>}
+                {c.fix && <p className="small" style={{ margin: 0 }}>{c.fix}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {ignoredIssues.length > 0 && (
+          <details className="small">
+            <summary className="muted">{ignoredIssues.length} ignored</summary>
+            <ul className="finding-list" style={{ marginTop: 8 }}>
+              {ignoredIssues.map((c) => (
+                <li key={c.check} className="finding is-ignored">
+                  <div className="row finding-top">
+                    <strong>{c.label}</strong>
+                    <span className="spacer" />
+                    {onIgnore && <button type="button" className="btn btn-quiet btn-small" onClick={() => onIgnore(c.check, false)}>Restore</button>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {passed.length > 0 && (
+          <details className="small">
+            <summary className="muted">{passed.length} {passed.length === 1 ? "check" : "checks"} passed</summary>
+            <ul className="stack" style={{ gap: 6, marginTop: 8, paddingLeft: 18 }}>
+              {passed.map((c) => <li key={c.check}><strong>{c.label}</strong>{c.evidence ? <span className="muted"> — {c.evidence}</span> : null}</li>)}
+            </ul>
+          </details>
+        )}
+      </section>
+    );
+  }
+
   return (
     <section className="card stack" aria-label="SEO and GEO check">
       <div className="row">
@@ -93,8 +181,10 @@ export function SeoGeoPanel({ piece, scope, result, disabled, reason, onDone, on
           </span>
         </div>
         <span className="spacer" />
-        <AiAction label={result ? "Check again" : "Run check"} primary={!result} disabled={disabled} reason={reason}
-          payload={{ task: "seo_geo_check", piece_id: piece.id, scope }} onDone={onDone} />
+        {!hideRun && (
+          <AiAction label={result ? "Check again" : "Run check"} primary={!result} disabled={disabled} reason={reason}
+            payload={{ task: "seo_geo_check", piece_id: piece.id, scope }} onDone={onDone} />
+        )}
       </div>
       {result && (
         <>

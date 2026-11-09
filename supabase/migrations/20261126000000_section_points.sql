@@ -1,0 +1,11 @@
+-- Talking points for a section: what the Writing step's "prepare" run works out for the writer, kept with the section so
+-- everything needed to write it is on one screen.
+--
+-- points: {
+--   "titles":   ["alternative headings", ...],
+--   "points":   [{ "point": "...", "direction": "...", "evidence": "...", "refs": [research item ids], "sub_section": "..." }],
+--   "extra_sub_sections": [{ "heading": "...", "why": "..." }],
+--   "thin":     ["where the research is thin and the writer's own view is needed", ...],
+--   "prepared_at": "<timestamp>"
+-- }
+alter table public.piece_sections add column points jsonb;
