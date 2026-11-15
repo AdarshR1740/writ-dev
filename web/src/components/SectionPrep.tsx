@@ -3,6 +3,7 @@ import { callFunction, errorMessage } from "../lib/supabase";
 import { CopyButton } from "./ui";
 import { MarkdownView } from "./Links";
 import type { Section, SectionPoints } from "../lib/types";
+import { headingLine } from "../lib/assemble";
 
 /** A section the "prepare" run hasn't done yet (the old manual research and brief steps are still reachable for it). */
 export const isUnprepared = (s: Section) => s.status === "research" || s.status === "brief";
@@ -334,7 +335,7 @@ export function AiWritePanel({ sections, onRunningChange, onProgress, onFinished
 
 /** The whole draft as one document, with a way into each section to edit it. */
 export function FullDraft({ title, sections, onOpen }: { title: string; sections: Section[]; onOpen: (id: string) => void }) {
-  const text = [`# ${title}`, ...sections.map((s) => `## ${s.heading}\n\n${s.content.trim() || "(not written yet)"}`)].join("\n\n");
+  const text = [`# ${title}`, ...sections.map((s) => `${headingLine(s)}\n\n${s.content.trim() || "(not written yet)"}`)].join("\n\n");
   const words = sections.reduce((n, s) => n + (s.content.trim() ? s.content.trim().split(/\s+/).length : 0), 0);
   const written = sections.filter((s) => s.content.trim()).length;
   return (
@@ -352,7 +353,7 @@ export function FullDraft({ title, sections, onOpen }: { title: string; sections
         {sections.map((s) => (
           <section key={s.id} className="stack" style={{ gap: 8 }}>
             <div className="row" style={{ alignItems: "baseline" }}>
-              <h2>{s.heading}</h2>
+              {s.level === 3 ? <h3>{s.heading}</h3> : <h2>{s.heading}</h2>}
               <span className="spacer" />
               {s.ai_draft && <span className="tag flag">AI draft</span>}
               {s.status === "written" && <span className="tag ok">Written</span>}

@@ -10,6 +10,7 @@ import {
   ANALYSIS_FIX_SYSTEM,
   ANALYSIS_VERIFY_SYSTEM,
   DRAFT_HEADINGS_NOTE,
+  DRAFT_SUBHEADING_NOTE,
   DRAFT_LINKS_NOTE,
   DRAFT_POINTS_NOTE,
   REVISE_SYSTEM,
@@ -241,6 +242,7 @@ export const ENTRIES: Entry[] = [
       text: DRAFT_SYSTEM,
       locked: [
         { label: "Always added: headings (H3 and H4) inside the section", text: DRAFT_HEADINGS_NOTE },
+        { label: "Added instead when the section is itself a sub-heading (H3)", text: DRAFT_SUBHEADING_NOTE },
         { label: "Always added: sources are linked in the text", text: DRAFT_LINKS_NOTE },
         { label: "Added when the section has talking points", text: DRAFT_POINTS_NOTE },
       ],

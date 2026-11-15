@@ -6,7 +6,8 @@ import { UserError } from "../_shared/cors.ts";
 import { admin, requireRole } from "../_shared/supabase.ts";
 import { type JsonSchema, recordUsage, runModel } from "../_shared/llm.ts";
 import type { TaskType } from "../_shared/models.ts";
-import { loadPiece, logEvent } from "../_shared/context.ts";
+import { loadPiece, logEvent, sectionTexts } from "../_shared/context.ts";
+import { assemble } from "../_shared/assemble.ts";
 import type { Prepared } from "./prepared.ts";
 import { promptSet } from "../_shared/prompt-overrides.ts";
 
@@ -196,8 +197,8 @@ const norm = (s: string) => s.toLowerCase().replace(/[*_`#>\[\]]/g, "").replace(
 async function prepareMemoryCheck(userId: string, body: Record<string, unknown>): Promise<Prepared> {
   const piece = await loadPiece(String(body.piece_id ?? ""));
   await requireRole(userId, piece.company_id, "member");
-  const { data: secs } = await admin.from("piece_sections").select("heading, content").eq("piece_id", piece.id).order("position");
-  const text = (secs ?? []).map((s) => `## ${s.heading}\n\n${s.content.trim()}`).join("\n\n");
+  const { data: secs } = await sectionTexts(piece.id, "heading, content");
+  const text = assemble(secs ?? [], { trim: true });
   if (!(secs ?? []).some((s) => s.content.trim())) throw new UserError("Write the piece first; the check compares its text.");
   // Search with the piece's own words: title, keyword, headings and text. Earlier versions of this piece don't count.
   const passages = await search(piece.company_id, `${piece.title} ${piece.primary_keyword} ${text}`, 12, ["piece", "research"], piece.code);

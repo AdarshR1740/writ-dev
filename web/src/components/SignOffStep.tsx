@@ -7,6 +7,7 @@ import { must, useLoad } from "../lib/useLoad";
 import { formatDate, plural } from "../lib/format";
 import { useCompany } from "../lib/session";
 import type { Piece, Section } from "../lib/types";
+import { headingLine } from "../lib/assemble";
 import { ContractResults } from "./WritingStep";
 import { AiAction, CopyButton, ErrorText, Loading, CleanTextarea } from "./ui";
 import { useSession } from "../lib/session";
@@ -81,8 +82,9 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
   const shown = data.sections.map((s) => ({
     heading: data.sections.length === 1 && s.heading.trim().toLowerCase() === piece.title.trim().toLowerCase() ? "" : s.heading,
     content: s.content.trim(),
+    level: s.level,
   }));
-  const draft = shown.map((s) => (s.heading ? `## ${s.heading}\n\n${s.content}` : s.content)).join("\n\n");
+  const draft = shown.map((s) => (s.heading ? `${headingLine(s)}\n\n${s.content}` : s.content)).join("\n\n");
 
   async function exportAudit() {
     try {
@@ -209,7 +211,7 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
           )}
         </div>
 
-        {done && <ExportPanel piece={piece} sections={data.sections.map((s) => ({ heading: s.heading, content: s.content }))} disclosure={data.company.disclosure_line} />}
+        {done && <ExportPanel piece={piece} sections={data.sections.map((s) => ({ heading: s.heading, content: s.content, level: s.level }))} disclosure={data.company.disclosure_line} />}
 
         {done && recipe.signoff.learn && <LearnPanel piece={piece} />}
 

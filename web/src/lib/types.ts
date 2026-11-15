@@ -283,6 +283,10 @@ export interface Section {
   id: string;
   piece_id: string;
   position: number;
+  /** 2 for a main heading (H2), 3 for a sub-heading (H3) under the main heading above it. */
+  level: 2 | 3;
+  /** How much the writer wants this to say. Guidance for drafting, never a cut-off. */
+  depth: "short" | "standard" | "deep";
   heading: string;
   purpose: string;
   expectation_ids: string[];

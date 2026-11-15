@@ -12,7 +12,7 @@ type Kind = "docx" | "html" | "markdown" | "copy" | "wordpress";
 /** Export a finished piece: Word, HTML, Markdown, formatted copy, or a WordPress draft. */
 export function ExportPanel({ piece, sections, disclosure }: {
   piece: Piece;
-  sections: { heading: string; content: string }[];
+  sections: { heading: string; content: string; level?: number | null }[];
   disclosure: string;
 }) {
   const company = useCompany();

@@ -64,6 +64,10 @@ export interface SectionRow {
   piece_id: string;
   company_id: string;
   position: number;
+  /** 2 for a main heading (H2), 3 for a sub-heading (H3) under the main heading above it. */
+  level?: number;
+  /** How much the writer wants this to say: short, standard or deep. */
+  depth?: string;
   heading: string;
   purpose: string;
   expectation_ids: string[];
@@ -75,6 +79,21 @@ export interface SectionRow {
   structure: { type: string; note: string }[] | null;
   /** What the Writing step's prepare run worked out for the section (talking points with their evidence). */
   points?: { points: { point: string; direction: string; evidence: string; refs: string[]; sub_section: string }[] } | null;
+}
+
+/**
+ * A piece's sections in order, with each one's heading level, for putting the text back together. A database that has not
+ * had the sub-headings migration yet has no level column: its sections are all main headings, so the read is repeated without it.
+ */
+export interface SectionText { heading: string; content: string; level?: number | null; ai_draft?: string | null }
+
+export async function sectionTexts(pieceId: string, columns: string): Promise<{ data: SectionText[] | null; error: { message: string } | null }> {
+  // The column list is built at run time, so the client can't work out the row type: it is stated here.
+  const read = (cols: string) => admin.from("piece_sections").select(cols).eq("piece_id", pieceId).order("position") as unknown as
+    PromiseLike<{ data: SectionText[] | null; error: { message: string } | null }>;
+  const r = await read(`${columns}, level`);
+  if (r.error && /\blevel\b/i.test(r.error.message)) return await read(columns);
+  return r;
 }
 
 export async function loadSection(sectionId: string): Promise<SectionRow> {

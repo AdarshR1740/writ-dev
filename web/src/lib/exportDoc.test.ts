@@ -72,3 +72,23 @@ describe("export", () => {
     expect(fileName("Why twins stall: a 2026 view!", "docx")).toBe("why-twins-stall-a-2026-view.docx");
   });
 });
+
+describe("sub-headings (level 3 sections)", () => {
+  const nested: ExportPiece = {
+    title: "T",
+    sections: [
+      { heading: "Emerging technologies", content: "Opening." },
+      { heading: "Quantum", content: "Deep dive.\n\n#### Detail\n\nMore.", level: 3 },
+      { heading: "Next", content: "Text.", level: 2 },
+    ],
+  };
+  it("exports a level 3 section's heading as an H3 and keeps the rest in order", () => {
+    expect(toBlocks(nested).map((b) => b.kind)).toEqual(["h2", "p", "h3", "p", "h4", "p", "h2", "p"]);
+    const html = bodyHtml(nested);
+    expect(html).toContain("<h3>Quantum</h3>");
+    expect(html).toContain("<h2>Next</h2>");
+  });
+  it("treats a section without a level as a main heading, as before", () => {
+    expect(toBlocks(piece).filter((b) => b.kind === "h2").length).toBe(2);
+  });
+});

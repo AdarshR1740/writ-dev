@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase";
 import { useCompany } from "../lib/session";
 import { must, useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
+import { assemble } from "../lib/assemble";
 import { STAGES, type Piece, type PieceLink, type Section } from "../lib/types";
 import { Redline } from "../components/Redline";
 import { ErrorText, Loading, Modal, Tabs, Lede } from "../components/ui";
@@ -150,8 +151,8 @@ function CompareVersions({ versions, onClose }: { versions: Row[]; onClose: () =
   const [a, setA] = useState(versions[versions.length - 2]?.id ?? versions[0].id);
   const [b, setB] = useState(versions[versions.length - 1].id);
   const { data } = useLoad(async () => {
-    const text = async (id: string) => must<Pick<Section, "heading" | "content">[]>(await supabase.from("piece_sections")
-      .select("heading, content").eq("piece_id", id).order("position")).map((s) => `## ${s.heading}\n\n${s.content.trim()}`).join("\n\n");
+    const text = async (id: string) => assemble(must<Pick<Section, "heading" | "content" | "level">[]>(await supabase.from("piece_sections")
+      .select("heading, content, level").eq("piece_id", id).order("position")), { trim: true });
     return { before: await text(a), after: await text(b) };
   }, [a, b]);
   const pick = (value: string, set: (v: string) => void, label: string) => (

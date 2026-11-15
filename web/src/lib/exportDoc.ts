@@ -2,7 +2,8 @@
 // Section text is plain Markdown-ish writing: paragraphs, ### and #### subheads, - and 1. lists, tables,
 // **bold**, *italic* and [links](https://…). Everything else is kept as text.
 
-export interface ExportSection { heading: string; content: string }
+/** `level` 3 is a sub-heading under the main heading above it; anything else is a main heading. */
+export interface ExportSection { heading: string; content: string; level?: number | null }
 export interface ExportSource { title: string; url: string | null; published: string | null }
 export interface ExportPiece {
   title: string;
@@ -39,7 +40,7 @@ export function toBlocks(piece: ExportPiece): Block[] {
   const single = piece.sections.length === 1 && piece.sections[0].heading.trim().toLowerCase() === piece.title.trim().toLowerCase();
   const out: Block[] = [];
   for (const s of piece.sections) {
-    if (!single && s.heading.trim()) out.push({ kind: "h2", text: s.heading.trim() });
+    if (!single && s.heading.trim()) out.push({ kind: s.level === 3 ? "h3" : "h2", text: s.heading.trim() });
     for (const raw of s.content.trim().split(/\n{2,}/)) {
       const block = raw.trim();
       if (!block) continue;

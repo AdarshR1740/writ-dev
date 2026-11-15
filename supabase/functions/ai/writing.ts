@@ -8,6 +8,7 @@ import { type JsonSchema, recordUsage, runModel } from "../_shared/llm.ts";
 import type { TaskType } from "../_shared/models.ts";
 import {
   approvedItems,
+  sectionTexts,
   contextFor,
   on,
   requireStep,
@@ -20,6 +21,7 @@ import {
 } from "../_shared/context.ts";
 import type { Prepared } from "./prepared.ts";
 import { promptSet } from "../_shared/prompt-overrides.ts";
+import { assemble } from "../_shared/assemble.ts";
 import { describeThread, type ThreadRow, wantsWeb, webBlock, webLookup } from "./chat.ts";
 
 const str = { type: "string" };
@@ -851,6 +853,10 @@ The section's own heading (H2) is added separately: never write one, and never u
 - #### (H4) for a smaller part inside an H3, only when that part needs its own label.
 A short opening (an "answer" block or a first paragraph) comes before the first heading and has none. A section with only one or two small parts needs no headings. Headings are short noun phrases or plain statements, never "Introduction", "Overview" or "Conclusion", and never a question (a question belongs in an faq block, in bold).`;
 
+/** Replaces the headings note when the section is itself a sub-heading (H3): it never writes its own heading and never goes above H4. */
+export const DRAFT_SUBHEADING_NOTE = `SUB-HEADING SECTION
+This section is itself a sub-heading (H3) under a main heading. Its own heading is added separately: never write it, and never use "#", "##" or "###". Use #### (H4) only for a smaller part inside it that needs its own label; a planned block of the kind subheading is written as ####. A short opening comes first, with no heading.`;
+
 /** Added to every draft prompt: sources are linked in the text, so the writer can open each one and decide whether to keep it. */
 export const DRAFT_LINKS_NOTE = `INLINE SOURCES
 When the text uses a fact, figure or finding from a research item, link it in line as a markdown link, [text](URL), on the source's name or on the phrase that carries the fact. Take the URL from that item's "url" line in <section_research>. Use only URLs given there and never invent one. Link a source once per paragraph at most. An item with no url is not linked.`;
@@ -890,7 +896,7 @@ async function prepareDraft(userId: string, body: Record<string, unknown>): Prom
   const { points: hasPoints, guide } = await sectionGuide(piece, section);
   const points = hasPoints ? [true] : null;
   const user = `${context}\n\n${guide}`;
-  const draftSystem = (await promptSet(piece.company_id))("draft", DRAFT_SYSTEM) + `\n\n${DRAFT_HEADINGS_NOTE}\n\n${DRAFT_LINKS_NOTE}` + (points ? `\n\n${DRAFT_POINTS_NOTE}` : "");
+  const draftSystem = (await promptSet(piece.company_id))("draft", DRAFT_SYSTEM) + `\n\n${section.level === 3 ? DRAFT_SUBHEADING_NOTE : DRAFT_HEADINGS_NOTE}\n\n${DRAFT_LINKS_NOTE}` + (points ? `\n\n${DRAFT_POINTS_NOTE}` : "");
   return task<{ text: string }>("section_draft", "write", piece, userId, draftSystem, user, obj({ text: str }), points ? 3500 : 2500,
     async (data, cost, model) => {
       const patch: Record<string, unknown> = { ai_draft: data.text };
@@ -1158,10 +1164,10 @@ async function prepareContractCheck(userId: string, body: Record<string, unknown
   let text: string;
   if (section) {
     if (!section.content.trim()) throw new UserError("Write the section first.");
-    text = `## ${section.heading}\n\n${section.content}`;
+    text = assemble([section]);
   } else {
-    const { data: secs } = await admin.from("piece_sections").select("heading, content").eq("piece_id", piece.id).order("position");
-    text = (secs ?? []).map((s) => `## ${s.heading}\n\n${s.content}`).join("\n\n");
+    const { data: secs } = await sectionTexts(piece.id, "heading, content");
+    text = assemble(secs ?? []);
     if (!text.trim()) throw new UserError("Nothing written yet.");
   }
   const user = `<reader_contract>
@@ -1287,8 +1293,8 @@ async function prepareSeoGeo(userId: string, body: Record<string, unknown>): Pro
     if (!secs?.length) throw new UserError("Save an outline first.");
     subject = `<outline>\n${secs.map((x) => `${x.position}. ${x.heading} (${x.purpose})`).join("\n")}\n</outline>`;
   } else {
-    const { data: secs } = await admin.from("piece_sections").select("heading, content").eq("piece_id", piece.id).order("position");
-    const text = (secs ?? []).map((x) => `## ${x.heading}\n\n${x.content}`).join("\n\n");
+    const { data: secs } = await sectionTexts(piece.id, "heading, content");
+    const text = assemble(secs ?? []);
     if (!text.trim()) throw new UserError("Nothing written yet.");
     subject = `<piece>\n# ${piece.title}\n\n${text}\n</piece>`;
   }
@@ -1379,7 +1385,7 @@ async function prepareRepurpose(userId: string, body: Record<string, unknown>): 
   for (const sourceId of plan.source_piece_ids as string[]) {
     const src = await loadPiece(sourceId);
     if (src.company_id !== plan.company_id) throw new UserError("A source piece belongs to another company.");
-    const { data: secs } = await admin.from("piece_sections").select("heading, content").eq("piece_id", src.id).order("position");
+    const { data: secs } = await sectionTexts(src.id, "heading, content");
     const approved = await approvedItems(src.id);
     const { data: sectionItems } = await admin.from("research_items").select("id, statement, source_type").eq("piece_id", src.id)
       .eq("scope", "section").eq("status", "approved");
@@ -1392,7 +1398,7 @@ async function prepareRepurpose(userId: string, body: Record<string, unknown>): 
     const code = (src as unknown as { code?: string; version?: number }).code ?? "";
     const version = (src as unknown as { version?: number }).version ?? 1;
     parts.push(`<source id="${code} v${version}" title="${src.title.replace(/"/g, "'")}">
-${(secs ?? []).map((x) => `## ${x.heading}\n\n${x.content}`).join("\n\n")}
+${assemble(secs ?? [])}
 
 <approved_research>
 ${lines.join("\n") || "(none)"}
@@ -1469,15 +1475,14 @@ const learnSchema = obj({ rules: list(obj({ rule: str, evidence: str })) });
 async function prepareLearn(userId: string, body: Record<string, unknown>): Promise<Prepared> {
   const piece = await pieceFor(userId, body);
   requireStep(piece, on(piece, "signoff.learn"), "Learning from pieces");
-  const { data: sections } = await admin.from("piece_sections").select("heading, content, ai_draft").eq("piece_id", piece.id)
-    .order("position");
+  const { data: sections } = await sectionTexts(piece.id, "heading, content, ai_draft");
   const { data: full } = await admin.from("pieces").select("final_text").eq("id", piece.id).single();
   const { data: threads } = await admin.from("threads").select("thread_messages(role, content)").eq("piece_id", piece.id);
   const writerSaid = (threads ?? []).flatMap((t) => (t.thread_messages ?? []) as { role: string; content: string }[])
     .filter((m) => m.role === "writer").map((m) => `- ${m.content}`);
   const edits = (sections ?? []).filter((s) => s.ai_draft && s.ai_draft.trim() !== s.content.trim())
     .map((s) => `<section heading="${s.heading}">\n<ai_draft>\n${s.ai_draft}\n</ai_draft>\n<writer_kept>\n${s.content}\n</writer_kept>\n</section>`);
-  const assembled = (sections ?? []).map((s) => `## ${s.heading}\n\n${s.content}`).join("\n\n");
+  const assembled = assemble(sections ?? []);
   const published = full?.final_text?.trim() && full.final_text.trim() !== assembled.trim()
     ? `<assembled_draft>\n${assembled}\n</assembled_draft>\n<published_version>\n${full.final_text}\n</published_version>`
     : "";
