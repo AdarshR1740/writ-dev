@@ -26,6 +26,9 @@ import {
   GRAMMAR_SYSTEM,
   LEARN_SYSTEM,
   OUTLINE_SYSTEM,
+  OUTLINE_LEVELS_NOTE,
+  OUTLINE_BUILD_LEVELS_NOTE,
+  SEO_FIX_LEVELS_NOTE,
   REPURPOSE_BASE,
   REPURPOSE_SHAPES,
   SEO_FIX_FINAL,
@@ -197,7 +200,7 @@ export const ENTRIES: Entry[] = [
     when: "On the Outline step, when you press Create outline after the benchmark. It is followed by \"Improve section structure\" below.",
     tier: "reason",
     receives: ["Brief", "Scope", "Analysis", "Approved piece research", "Format style profile"],
-    units: [{ key: "outline_build", label: "Prompt", text: OUTLINE_BUILD_SYSTEM }],
+    units: [{ key: "outline_build", label: "Prompt", text: OUTLINE_BUILD_SYSTEM, locked: [{ label: "Added in a free outline: sub-headings (H3)", text: OUTLINE_BUILD_LEVELS_NOTE }] }],
   },
   {
     id: "outline_suggest",
@@ -206,7 +209,7 @@ export const ENTRIES: Entry[] = [
     when: "On the Outline step, in the conversation with the AI.",
     tier: "reason",
     receives: ["Brief", "Scope", "Analysis", "Approved piece research", "Format style profile", "The conversation"],
-    units: [{ key: "outline", label: "Prompt", text: OUTLINE_SYSTEM }],
+    units: [{ key: "outline", label: "Prompt", text: OUTLINE_SYSTEM, locked: [{ label: "Always added: sub-headings (H3)", text: OUTLINE_LEVELS_NOTE }] }],
   },
   {
     id: "section_points",
@@ -332,7 +335,7 @@ export const ENTRIES: Entry[] = [
     tier: "reason",
     receives: ["Brief", "Scope", "Approved search-landscape findings", "The gaps the check found", "The outline or the finished piece"],
     units: [
-      { key: "seo_fix.outline", label: "Prompt for the outline", text: SEO_FIX_OUTLINE },
+      { key: "seo_fix.outline", label: "Prompt for the outline", text: SEO_FIX_OUTLINE, locked: [{ label: "Added when the outline has sub-headings", text: SEO_FIX_LEVELS_NOTE }] },
       { key: "seo_fix.final", label: "Prompt for the finished piece", text: SEO_FIX_FINAL },
     ],
   },

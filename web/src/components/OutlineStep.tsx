@@ -11,15 +11,7 @@ import { SeoGeoPanel, type OutlineFix, type SeoGeoResult } from "./SeoGeoPanel";
 import { BlockTypePicker } from "./BlockTypePicker";
 import { ChatPanel } from "./ChatPanel";
 import { normalise } from "../lib/recipes";
-
-interface Draft {
-  key: string;
-  heading: string;
-  purpose: string;
-  expectation_ids: string[];
-  /** What goes under the heading, block by block. Empty until planned. */
-  structure: Block[];
-}
+import { asDepth, blankMainWithSubs, DEPTH_LABELS, groupEnd, moveGroup, moveSub, setLevel, type Draft } from "../lib/outlineRows";
 
 /** The piece's working title and primary keyword, editable on the outline. Each is saved when you leave its box. */
 function TitleFields({ piece, disabled, onSaved }: { piece: Piece; disabled: boolean; onSaved: () => void }) {
@@ -97,11 +89,11 @@ const key = () => Math.random().toString(36).slice(2, 9);
 const cleanBlocks = (b: Block[]) => b.filter((x) => x.note.trim()).map((x) => ({ type: x.type, note: x.note.trim() }));
 /** What gets saved: the sections that have a heading, in order, with their blocks tidied. */
 const savable = (list: Draft[]) => list.filter((s) => s.heading.trim()).map((s) => ({
-  id: s.key, heading: s.heading.trim(), purpose: s.purpose.trim(), expectation_ids: s.expectation_ids, structure: cleanBlocks(s.structure),
+  id: s.key, level: s.level, depth: s.depth, heading: s.heading.trim(), purpose: s.purpose.trim(), expectation_ids: s.expectation_ids, structure: cleanBlocks(s.structure),
 }));
 /** The same, as one comparable string: equal means there is nothing new to save. */
-const outlineSig = (list: { heading: string; purpose: string; expectation_ids: string[]; structure?: Block[] | null }[]) =>
-  JSON.stringify(list.filter((s) => s.heading.trim()).map((s) => [s.heading.trim(), s.purpose.trim(), s.expectation_ids, cleanBlocks(s.structure ?? [])]));
+const outlineSig = (list: { heading: string; purpose: string; expectation_ids: string[]; structure?: Block[] | null; level?: number; depth?: string }[]) =>
+  JSON.stringify(list.filter((s) => s.heading.trim()).map((s) => [s.heading.trim(), s.purpose.trim(), s.expectation_ids, cleanBlocks(s.structure ?? []), s.level ?? 2, s.depth ?? "standard"]));
 
 /** Analysis of the reviewed research, then the outline (writer-owned, AI-suggested). */
 export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; onAdvanced: () => void; onChanged: () => void }) {
@@ -147,7 +139,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   useEffect(() => {
     if (data && (draft === null || (resync.current !== null && data !== resync.current))) {
       resync.current = null;
-      setDraft(data.sections.map((s) => ({ key: s.id, heading: s.heading, purpose: s.purpose, expectation_ids: s.expectation_ids, structure: s.structure ?? [] })));
+      setDraft(data.sections.map((s) => ({ key: s.id, level: s.level === 3 ? 3 : 2, depth: asDepth(s.depth), heading: s.heading, purpose: s.purpose, expectation_ids: s.expectation_ids, structure: s.structure ?? [] })));
     }
   }, [data, draft]);
 
@@ -167,7 +159,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   // The outline as it was when a save last failed: it isn't tried again until the writer changes something.
   const failedSig = useRef<string | null>(null);
   useEffect(() => {
-    if (!data || !draft || confirmed || saveState === "saving" || busy) return;
+    if (!data || !draft || confirmed || saveState === "saving" || busy || blankMainWithSubs(draft)) return;
     const sig = outlineSig(draft);
     if (sig === outlineSig(data.sections) || sig === failedSig.current) return;
     const t = window.setTimeout(async () => {
@@ -192,7 +184,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   const { contract, messages } = data;
   // Not saved yet (the editor saves by itself shortly after an edit).
   const dirty = outlineSig(draft) !== outlineSig(data.sections);
-  // Every section with a heading already has sub-sections, so there is nothing for Define sub-sections to plan.
+  // Every section with a heading already has a content plan, so there is nothing for Plan section contents to do.
   const allPlanned = draft.filter((s) => s.heading.trim()).every((s) => s.structure.length > 0);
   const uncovered = contract.expectations.filter((e) => !draft.some((s) => s.expectation_ids.includes(e.id)));
 
@@ -209,6 +201,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   }
 
   async function save(list: Draft[] = draft!) {
+    if (blankMainWithSubs(list)) throw new Error("Give the main heading above the sub-headings a name first (or remove it).");
     // While this runs, the automatic save waits, so the two never write at once.
     setSaveState("saving");
     try {
@@ -222,13 +215,25 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
     }
   }
 
-  // A section the AI keeps under the same heading stays the same section, so its text and research are kept.
-  const keyFor = (heading: string) => draft.find((d) => d.heading.trim().toLowerCase() === heading.trim().toLowerCase())?.key ?? key();
+  // A section the AI keeps under the same heading stays the same section, so its text and research are kept. Each existing
+  // section is matched once, so two headings that are the same stay two sections.
+  const claimKeys = () => {
+    const used = new Set<string>();
+    return (heading: string) => {
+      const k = draft.find((d) => !used.has(d.key) && d.heading.trim().toLowerCase() === heading.trim().toLowerCase())?.key ?? key();
+      used.add(k);
+      return k;
+    };
+  };
   const update = (k: string, patch: Partial<Draft>) => setDraft(draft.map((s) => (s.key === k ? { ...s, ...patch } : s)));
-  const move = (i: number, d: -1 | 1) => {
-    const list = [...draft];
-    [list[i], list[i + d]] = [list[i + d], list[i]];
-    setDraft(list);
+  // Sub-headings only exist in a free outline; the other kinds keep their fixed or single-section shape.
+  const canNest = recipe.outline.mode === "free";
+  const removeRow = (i: number) => {
+    const end = draft[i].level === 3 ? i + 1 : groupEnd(draft, i);
+    const gone = draft.slice(i, end);
+    // A main heading takes its sub-headings with it, and each may have research and text waiting: ask first.
+    if (gone.length > 1 && !window.confirm(`Remove "${draft[i].heading.trim() || "this section"}" and its ${gone.length - 1} ${gone.length === 2 ? "sub-heading" : "sub-headings"}?`)) return;
+    setDraft([...draft.slice(0, i), ...draft.slice(end)]);
   };
 
   /**
@@ -238,19 +243,27 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   async function createOutline(progress: (text: string) => void) {
     const before = draft ?? [];
     progress("Planning the sections…");
-    const built = await callFunction<{ sections: { heading: string; purpose: string; expectations: number[] }[] }>("ai", { task: "outline_build", piece_id: piece.id });
-    const planned: Draft[] = built.sections.map((s) => ({
-      key: keyFor(s.heading),
-      heading: s.heading,
-      purpose: s.purpose,
-      expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
-      structure: [],
-    }));
+    const built = await callFunction<{ sections: { heading: string; purpose: string; expectations: number[]; sub_headings?: { heading: string; purpose: string; depth: string }[] }[] }>("ai", { task: "outline_build", piece_id: piece.id });
+    // A section that is a set of items comes with a sub-heading for each, in order, right after it.
+    const keyFor = claimKeys();
+    const planned: Draft[] = built.sections.flatMap((s): Draft[] => [
+      {
+        key: keyFor(s.heading), level: 2, depth: "standard", heading: s.heading, purpose: s.purpose,
+        expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
+        structure: [],
+      },
+      ...(canNest ? s.sub_headings ?? [] : []).map((h): Draft => ({
+        key: keyFor(h.heading), level: 3, depth: asDepth(h.depth), heading: h.heading, purpose: h.purpose, expectation_ids: [], structure: [],
+      })),
+    ]);
     await save(planned);
     if (before.some((s) => s.heading.trim())) setUndo(before);
     setUndoTitle(null);
     progress("Planning what goes in each section…");
-    let note = "The outline is ready. Edit it as you like, then confirm it.";
+    const subCount = planned.filter((s) => s.level === 3).length;
+    let note = subCount > 0
+      ? `The outline is ready, with ${subCount} ${subCount === 1 ? "sub-heading" : "sub-headings"} under ${planned.filter((s, i) => s.level === 2 && planned[i + 1]?.level === 3).length} of its sections. Each gets its own research and writing. Edit it as you like, then confirm it.`
+      : "The outline is ready. Edit it as you like, then confirm it.";
     let structured = true;
     try {
       const st = await callFunction<{ sections: { position: number; blocks: Block[] }[] }>("ai", { task: "outline_structure", piece_id: piece.id });
@@ -258,7 +271,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
     } catch (e) {
       // The sections are saved; only the planning inside them is missing.
       structured = false;
-      note = `The sections are ready, but planning the sub-sections didn't finish (${errorMessage(e)}). Use Define sub-sections to try again.`;
+      note = `The sections are ready, but planning what goes in each one didn't finish (${errorMessage(e)}). Use Plan section contents to try again.`;
     }
     // The search and answer-engine checks run here, once, and what they find is fixed. After this the writer edits the
     // outline and runs the checks again themselves, from the button at the top.
@@ -310,8 +323,11 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
 
   /** The AI's revised outline from the SEO/GEO fix, as editor sections. */
   function outlineFromFix(fix: OutlineFix): Draft[] {
+    const keyFor = claimKeys();
     return fix.sections.map((s) => ({
       key: keyFor(s.heading),
+      level: s.level === 3 ? 3 : 2,
+      depth: asDepth(s.depth),
       heading: s.heading,
       purpose: s.purpose,
       expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
@@ -433,15 +449,15 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
               : (dirty || saveState === "saving") && <span className="small faint">Saving…</span>)}
             {!confirmed && recipe.outline.mode !== "off" && draft.some((s) => s.heading.trim()) && (
               <AiAction<{ sections: { position: number; blocks: Block[] }[] }>
-                label="Define sub-sections"
+                label="Plan section contents"
                 primary={false}
                 small
                 reasonAsTitle
                 disabled={dirty || saveState === "saving" || allPlanned}
-                reason={saveState === "error" ? "Your last edit couldn't be saved" : allPlanned ? "Every section has sub-sections" : "Saving…"}
-                // Only sections that have none are planned; the sub-sections you already have are left as they are.
+                reason={saveState === "error" ? "Your last edit couldn't be saved" : allPlanned ? "Every section has a content plan" : "Saving…"}
+                // Only sections that have none are planned; the plans you already have are left as they are.
                 payload={{ task: "outline_structure", piece_id: piece.id, only_missing: true }}
-                onBusyChange={(b) => setWorking(b ? "Defining the sub-sections…" : null)}
+                onBusyChange={(b) => setWorking(b ? "Planning what goes in each section…" : null)}
                 onDone={(r) => {
                   // Sections the AI planned get their blocks; they are saved by themselves like any other edit. The
                   // positions count only sections with a heading, as the server does.
@@ -482,26 +498,49 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
               </div>
             )}
             <ol className="expectations outline-list" style={working ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
-              {draft.map((s, i) => (
-                <li key={s.key}>
-                  {/* One card per section: the heading with its controls, what it is for, the points it serves, and its sub-sections. */}
-                  <div className="outline-card">
+              {draft.map((s, i) => {
+                const sub = s.level === 3;
+                // A main heading moves with its sub-headings, so "last" and "first" are about main headings.
+                const canUp = (sub ? moveSub(draft, i, -1) : moveGroup(draft, i, -1)) !== draft;
+                const canDown = (sub ? moveSub(draft, i, 1) : moveGroup(draft, i, 1)) !== draft;
+                return (
+                <li key={s.key} className={sub ? "outline-sub" : undefined}>
+                  {/* One card per section: the heading with its controls, what it is for, the points it serves, and what goes in it. A sub-heading is a smaller card under its main heading. */}
+                  <div className={`outline-card${sub ? " sub" : ""}`}>
                     <div className="section-head">
+                      {sub && <span className="level-tag" title="Sub-heading (H3)">H3</span>}
                       <input type="text" value={s.heading} disabled={confirmed} onChange={(e) => update(s.key, { heading: e.target.value })}
-                        placeholder="Section heading" aria-label={`Section ${i + 1} heading`} className="heading-input" />
+                        placeholder={sub ? "Sub-heading" : "Section heading"} aria-label={`${sub ? "Sub-heading" : "Section"} ${i + 1} heading`} className="heading-input" />
                       {!confirmed && (
                         <div className="row" style={{ gap: 2, flexWrap: "nowrap" }}>
-                          <button type="button" className="btn btn-quiet btn-small" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move section up">↑</button>
-                          <button type="button" className="btn btn-quiet btn-small" disabled={i === draft.length - 1} onClick={() => move(i, 1)} aria-label="Move section down">↓</button>
-                          <button type="button" className="btn btn-quiet btn-small btn-danger" onClick={() => setDraft(draft.filter((x) => x.key !== s.key))}>Remove</button>
+                          <button type="button" className="btn btn-quiet btn-small" disabled={!canUp}
+                            onClick={() => setDraft(sub ? moveSub(draft, i, -1) : moveGroup(draft, i, -1))} aria-label={sub ? "Move sub-heading up" : "Move section up"}>↑</button>
+                          <button type="button" className="btn btn-quiet btn-small" disabled={!canDown}
+                            onClick={() => setDraft(sub ? moveSub(draft, i, 1) : moveGroup(draft, i, 1))} aria-label={sub ? "Move sub-heading down" : "Move section down"}>↓</button>
+                          {canNest && sub && (
+                            <button type="button" className="btn btn-quiet btn-small" title="Make this a main heading (H2)" onClick={() => setDraft(setLevel(draft, i, 2))}>→ H2</button>
+                          )}
+                          {canNest && !sub && i > 0 && (
+                            <button type="button" className="btn btn-quiet btn-small" title="Make this a sub-heading (H3) under the main heading above" onClick={() => setDraft(setLevel(draft, i, 3))}>→ H3</button>
+                          )}
+                          <button type="button" className="btn btn-quiet btn-small btn-danger" onClick={() => removeRow(i)}>Remove</button>
                         </div>
                       )}
                     </div>
+                    {sub && (
+                      <label className="depth-pick small muted">
+                        How much it should say
+                        <select value={s.depth} disabled={confirmed} onChange={(e) => update(s.key, { depth: asDepth(e.target.value) })}>
+                          {(Object.keys(DEPTH_LABELS) as Draft["depth"][]).map((d) => <option key={d} value={d}>{DEPTH_LABELS[d]}</option>)}
+                        </select>
+                      </label>
+                    )}
                     {/* A box that grows with its text, so a long purpose is never cut off. */}
                     <textarea className="purpose-input" value={s.purpose} disabled={confirmed} rows={Math.max(1, Math.ceil(s.purpose.length / 100))}
                       onChange={(e) => update(s.key, { purpose: e.target.value })}
-                      placeholder="What this section does for the reader" aria-label={`Section ${i + 1} purpose`} />
-                    <div className="owed">
+                      placeholder={sub ? "What this part tells the reader" : "What this section does for the reader"} aria-label={`${sub ? "Sub-heading" : "Section"} ${i + 1} purpose`} />
+                    {/* A sub-heading owes no contract points: its main heading does. */}
+                    {!sub && <div className="owed">
                       {contract.expectations.map((e, n) => (
                         <label key={e.id} className={`chip${s.expectation_ids.includes(e.id) ? " on" : ""}`} title={e.text}>
                           <input type="checkbox" disabled={confirmed} checked={s.expectation_ids.includes(e.id)} onChange={(ev) => update(s.key, {
@@ -510,11 +549,11 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                           Point {n + 1}
                         </label>
                       ))}
-                    </div>
+                    </div>}
                     {/* Closed by default, with the kinds of block in the summary, so the whole outline can be read at a glance. */}
                     <details className="structure">
                       <summary className="small">
-                        <span className="structure-title">Sub-sections</span>
+                        <span className="structure-title">Content plan</span>
                         <span className="clip">
                           {s.structure.length > 0
                             ? `· ${s.structure.length}: ${s.structure.map((b) => BLOCK_LABELS[b.type] ?? b.type).join(" · ")}`
@@ -523,13 +562,23 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                       </summary>
                       <StructureEditor blocks={s.structure} disabled={confirmed} onChange={(structure) => update(s.key, { structure })} />
                     </details>
+                    {/* A section made of parallel items (each tool, each step) gets a sub-heading for each, so each is researched and written on its own. */}
+                    {canNest && !sub && !confirmed && (
+                      <div>
+                        <button type="button" className="btn btn-quiet btn-small" onClick={() => {
+                          const at = groupEnd(draft, i);
+                          setDraft([...draft.slice(0, at), { key: key(), level: 3, depth: "standard", heading: "", purpose: "", expectation_ids: [], structure: [] }, ...draft.slice(at)]);
+                        }}>+ Add sub-heading</button>
+                      </div>
+                    )}
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ol>
             {!confirmed && (
               <div>
-                <button type="button" className="btn btn-small" onClick={() => setDraft([...draft, { key: key(), heading: "", purpose: "", expectation_ids: [], structure: [] }])}>
+                <button type="button" className="btn btn-small" onClick={() => setDraft([...draft, { key: key(), level: 2, depth: "standard", heading: "", purpose: "", expectation_ids: [], structure: [] }])}>
                   Add section
                 </button>
               </div>
@@ -551,6 +600,9 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                   setFixReply("Reverted to your previous outline.");
                 })}>Undo</button>}
               </p>
+            )}
+            {blankMainWithSubs(draft) && (
+              <p className="notice small">A main heading with sub-headings needs a name before the outline can be saved. Name it, or remove it.</p>
             )}
             {uncovered.length > 0 && draft.length > 0 && (
               <p className="notice small">
@@ -592,21 +644,27 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                 <ol className="small">{m.payload.sections.map((s, i) => <li key={i}><strong>{s.heading}</strong>: {s.purpose}</li>)}</ol>
                 <button type="button" className="btn btn-small btn-primary" onClick={() => {
                   // Only what changed is updated: a section the AI left as it was stays exactly as it is, including the
-                  // sub-sections planned for it. A changed section keeps its sub-sections too, unless it is new.
+                  // content plan. A changed section keeps its content plan too, unless it is new.
                   const norm = (h: string) => h.trim().toLowerCase();
                   const sameSet = (x: string[], y: string[]) => x.length === y.length && x.every((id) => y.includes(id));
-                  const incoming = m.payload!.sections!.map((s) => ({
-                    heading: s.heading,
-                    purpose: s.purpose,
-                    expectation_ids: s.expectations.map((n) => contract.expectations[n - 1]?.id).filter((x): x is string => Boolean(x)),
-                  }));
+                  const incoming = m.payload!.sections!.map((s, n) => {
+                    // The first section is always a main heading; sub-headings only in a free outline.
+                    const level: 2 | 3 = n > 0 && canNest && s.level === 3 ? 3 : 2;
+                    return {
+                      level,
+                      depth: asDepth(s.depth),
+                      heading: s.heading,
+                      purpose: s.purpose,
+                      expectation_ids: level === 3 ? [] : s.expectations.map((x) => contract.expectations[x - 1]?.id).filter((x): x is string => Boolean(x)),
+                    };
+                  });
                   let changed = 0;
                   // Each existing section is matched once, so two sections with the same heading stay two sections.
                   const used = new Set<string>();
                   const merged: Draft[] = incoming.map((inc) => {
                     const old = draft.find((d) => !used.has(d.key) && norm(d.heading) === norm(inc.heading));
                     if (old) used.add(old.key);
-                    if (old && old.purpose.trim() === inc.purpose.trim() && sameSet(old.expectation_ids, inc.expectation_ids)) return old;
+                    if (old && old.purpose.trim() === inc.purpose.trim() && sameSet(old.expectation_ids, inc.expectation_ids) && old.level === inc.level && old.depth === inc.depth) return old;
                     changed += 1;
                     return { ...inc, key: old?.key ?? key(), structure: old?.structure ?? [] };
                   });

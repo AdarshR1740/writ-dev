@@ -9,6 +9,7 @@ import type { TaskType } from "../_shared/models.ts";
 import {
   approvedItems,
   sectionTexts,
+  type OutlineRowDb,
   contextFor,
   on,
   requireStep,
@@ -21,7 +22,11 @@ import {
 } from "../_shared/context.ts";
 import type { Prepared } from "./prepared.ts";
 import { promptSet } from "../_shared/prompt-overrides.ts";
-import { assemble } from "../_shared/assemble.ts";
+import { assemble, outlinePrefix } from "../_shared/assemble.ts";
+import { applyOutlineChanges, BLOCK_TYPES, cleanBlocks, LEVEL_DEPTHS, normaliseLevels, type OutlineChange } from "../_shared/outline.ts";
+
+// Still exported from here, where the rest of the app reads them.
+export { applyOutlineChanges, BLOCK_TYPES, normaliseLevels };
 import { describeThread, type ThreadRow, wantsWeb, webBlock, webLookup } from "./chat.ts";
 
 const str = { type: "string" };
@@ -247,10 +252,10 @@ async function prepareAnalysisFix(userId: string, body: Record<string, unknown>)
   if (ran.item_ids?.join() !== items.map((i) => i.id).join() || ran.point_ids?.join() !== points.map((x) => x.id).join()) {
     throw new UserError("The research or scope has changed since the check. Run the check again first.");
   }
-  const { data: secs } = await admin.from("piece_sections").select("heading, purpose, expectation_ids").eq("piece_id", piece.id).order("position");
+  const { data: secs } = await sectionTexts<OutlineRowDb>(piece.id, "heading, purpose, expectation_ids");
   const outline = (secs ?? []).map((s, i) => {
-    const covers = points.flatMap((p, j) => (s.expectation_ids as string[]).includes(p.id) ? [j + 1] : []);
-    return `${i + 1}. ${s.heading}${s.purpose ? ` (${s.purpose})` : ""} covers points: ${covers.join(", ") || "none"}`;
+    const covers = points.flatMap((p, j) => (s.expectation_ids ?? []).includes(p.id) ? [j + 1] : []);
+    return `${outlinePrefix(s, i + 1)}${s.heading}${s.purpose ? ` (${s.purpose})` : ""} covers points: ${covers.join(", ") || "none"}`;
   }).join("\n");
   const context = `${await contextFor(piece, ["brief", "contract", "piece_items_plain", "analysis"])}\n\n<outline>\n${outline || "(no sections yet)"}\n</outline>`;
 
@@ -421,10 +426,10 @@ async function prepareAnalysisVerify(userId: string, body: Record<string, unknow
   });
   if (!findings.length) throw new UserError("Nothing is left to check.");
 
-  const { data: secs } = await admin.from("piece_sections").select("heading, purpose, expectation_ids").eq("piece_id", piece.id).order("position");
+  const { data: secs } = await sectionTexts<OutlineRowDb>(piece.id, "heading, purpose, expectation_ids");
   const outline = (secs ?? []).map((s, i) => {
-    const covers = points.flatMap((p, j) => (s.expectation_ids as string[]).includes(p.id) ? [j + 1] : []);
-    return `${i + 1}. ${s.heading}${s.purpose ? ` (${s.purpose})` : ""} covers points: ${covers.join(", ") || "none"}`;
+    const covers = points.flatMap((p, j) => (s.expectation_ids ?? []).includes(p.id) ? [j + 1] : []);
+    return `${outlinePrefix(s, i + 1)}${s.heading}${s.purpose ? ` (${s.purpose})` : ""} covers points: ${covers.join(", ") || "none"}`;
   }).join("\n");
   const context = `${await contextFor(piece, ["brief", "contract", "piece_items_plain"])}\n\n<outline>\n${outline || "(no sections yet)"}\n</outline>\n\n<findings_to_check>\n${JSON.stringify(findings, null, 1)}\n</findings_to_check>`;
   const system = (await promptSet(piece.company_id))("analysis_verify", ANALYSIS_VERIFY_SYSTEM);
@@ -492,9 +497,23 @@ OUTPUT (both fields are required)
 - reply: 1 to 3 sentences to the writer: what you changed and why, or one question.
 - sections: the FULL outline. Each section has "heading", "purpose" (one line) and "expectations" (a list of contract expectation numbers).`;
 
+/**
+ * Added to the outline conversation prompt: sub-headings (H3) under main headings. Always added, so a company's own saved
+ * prompt gets it too.
+ */
+export const OUTLINE_LEVELS_NOTE = `SUB-HEADINGS
+Every section also has "level" and "depth". Level 2 is a main heading. Level 3 is a sub-heading (H3) that sits under the main heading above it. Depth says how much a sub-heading should say: short, standard or deep (always "standard" for a main heading).
+- Keep the sub-headings the current outline already has, in place, unless the writer asks for a change.
+- Add sub-headings only where a main heading is made of parallel items that each deserve their own deep dive (for example each tool, technology or step). Do not split a section that has one thing to say. Most sections have none.
+- A sub-heading owes no contract expectations: leave its "expectations" empty and give them to its main heading. The first section is always a main heading.`;
+
+
 const outlineSchema = obj({
   reply: str,
-  sections: list(obj({ heading: str, purpose: str, expectations: list({ type: "integer" }) })),
+  sections: list(obj({
+    heading: str, purpose: str, expectations: list({ type: "integer" }),
+    level: { type: "integer" }, depth: { type: "string", enum: LEVEL_DEPTHS },
+  })),
 });
 
 async function threadId(piece: Piece, subject: "outline"): Promise<string> {
@@ -521,22 +540,21 @@ async function prepareOutline(userId: string, body: Record<string, unknown>): Pr
   const askedFor = message || (retry ? [...history].reverse().find((m) => m.role === "writer")?.content ?? "" : "");
   // A lookup runs when the writer ticked "Search the web", asked for one in words, or the reply being retried had one.
   const lookup = askedFor !== "" && (body.web === true || wantsWeb(askedFor) || Boolean((lastAi?.payload as { web?: unknown } | null)?.web));
-  const { data: current } = await admin.from("piece_sections").select("position, heading, purpose").eq("piece_id", piece.id)
-    .order("position");
+  const { data: current } = await sectionTexts<OutlineRowDb>(piece.id, "position, heading, purpose");
   // Wiring: brief, contract, analysis, approved research, format profile. No core voice or memory.
   const context = await contextFor(piece, ["brief", "contract", "analysis", "piece_items", "format_profile"]);
   const convo = describeThread(history, message ? { role: "writer", content: message } : undefined);
   const user = `${context}
 
 <current_outline>
-${(current ?? []).map((s) => `${s.position}. ${s.heading} (${s.purpose})`).join("\n") || "(empty)"}
+${(current ?? []).map((s) => `${outlinePrefix(s, s.position)}${s.heading} (${s.purpose})`).join("\n") || "(empty)"}
 </current_outline>
 
 <conversation>
 ${convo || "(No messages yet. Suggest a first outline.)"}
 </conversation>`;
-  return task<{ reply: string; sections: { heading: string; purpose: string; expectations: number[] }[] }>(
-    "outline_suggest", "reason", piece, userId, (await promptSet(piece.company_id))("outline", OUTLINE_SYSTEM), user, outlineSchema, 2000,
+  return task<{ reply: string; sections: { heading: string; purpose: string; expectations: number[]; level?: number; depth?: string }[] }>(
+    "outline_suggest", "reason", piece, userId, `${(await promptSet(piece.company_id))("outline", OUTLINE_SYSTEM)}\n\n${OUTLINE_LEVELS_NOTE}`, user, outlineSchema, 2500,
     async (data, cost, model, found) => {
       if (lastAi) await admin.from("thread_messages").delete().eq("id", lastAi.id);
       if (message) {
@@ -544,7 +562,7 @@ ${convo || "(No messages yet. Suggest a first outline.)"}
       }
       const { data: msg, error } = await admin.from("thread_messages").insert({
         company_id: piece.company_id, thread_id: thread, role: "ai", content: data.reply,
-        payload: { sections: data.sections, ...(found ? { web: found } : {}) },
+        payload: { sections: normaliseLevels(data.sections), ...(found ? { web: found } : {}) },
       }).select().single();
       if (error) throw error;
       await logEvent(piece, userId, "outline_suggested");
@@ -593,8 +611,19 @@ RULES
 OUTPUT
 - sections: the full outline. Each section has "heading", "purpose" (one line) and "expectations" (a list of contract expectation numbers).`;
 
+/** Added to the outline-building prompt in a free outline: where a section is a set of items, each gets a sub-heading (H3). */
+export const OUTLINE_BUILD_LEVELS_NOTE = `SUB-HEADINGS
+Each section also has "sub_headings": a list, usually empty. Give a section sub-headings (H3) only when it is made of parallel items that the reader will want covered one by one, in depth: each tool, technology, option, step or example. Then the section's own purpose covers just its short opening, and each sub-heading gets:
+- heading: specific to that item, never a question, never "Overview".
+- purpose: one line on what it tells the reader.
+- depth: short (a few lines), standard, or deep (a full deep dive with its own evidence and example). Give the items the reader cares about most a deep depth.
+Do not split a section that has one thing to say, and do not add sub-headings to cover the same ground twice. Most sections have none. At most 8 per section. Contract expectations belong to the main section, not its sub-headings.`;
+
 const outlineBuildSchema = obj({
-  sections: list(obj({ heading: str, purpose: str, expectations: list({ type: "integer" }) })),
+  sections: list(obj({
+    heading: str, purpose: str, expectations: list({ type: "integer" }),
+    sub_headings: list(obj({ heading: str, purpose: str, depth: { type: "string", enum: LEVEL_DEPTHS } })),
+  })),
 });
 
 async function prepareOutlineBuild(userId: string, body: Record<string, unknown>): Promise<Prepared> {
@@ -604,15 +633,28 @@ async function prepareOutlineBuild(userId: string, body: Record<string, unknown>
   if (row?.stage !== "outline" || row.outline_confirmed_at) throw new UserError("The outline can be built while it is open.");
   // Wiring: brief, contract, analysis, approved research, format profile. No voice or memory.
   const context = await contextFor(piece, ["brief", "contract", "analysis", "piece_items", "format_profile"]);
-  return task<{ sections: { heading: string; purpose: string; expectations: number[] }[] }>(
-    "outline_build", "reason", piece, userId, (await promptSet(piece.company_id))("outline_build", OUTLINE_BUILD_SYSTEM), context, outlineBuildSchema, 2500,
+  // Sub-headings exist only in a free outline; any other outline gets main headings alone.
+  const free = setting<string>(piece, "outline.mode") === "free";
+  return task<{ sections: { heading: string; purpose: string; expectations: number[]; sub_headings?: { heading: string; purpose: string; depth: string }[] }[] }>(
+    "outline_build", "reason", piece, userId,
+    `${(await promptSet(piece.company_id))("outline_build", OUTLINE_BUILD_SYSTEM)}${free ? `\n\n${OUTLINE_BUILD_LEVELS_NOTE}` : ""}`, context, outlineBuildSchema, free ? 4000 : 2500,
     async (data, cost, model) => {
+      let room = 40;
       const sections = data.sections
-        .map((s) => ({ heading: s.heading.trim(), purpose: s.purpose.trim(), expectations: [...new Set(s.expectations)] }))
+        .map((s) => ({ heading: s.heading.trim(), purpose: s.purpose.trim(), expectations: [...new Set(s.expectations)], sub_headings: [] as { heading: string; purpose: string; depth: string }[], raw: s.sub_headings ?? [] }))
         .filter((s) => s.heading)
-        .slice(0, 12);
+        .slice(0, 12)
+        .map(({ raw, ...s }) => {
+          if (free) {
+            const subs = raw.map((h) => ({ heading: h.heading.trim(), purpose: h.purpose.trim(), depth: LEVEL_DEPTHS.includes(h.depth) ? h.depth : "standard" }))
+              .filter((h) => h.heading).slice(0, Math.min(8, room));
+            room -= subs.length;
+            s.sub_headings = subs;
+          }
+          return s;
+        });
       if (!sections.length) throw new UserError("The AI didn't return an outline. Try again.");
-      await logEvent(piece, userId, "outline_built", { sections: sections.length });
+      await logEvent(piece, userId, "outline_built", { sections: sections.length, sub_headings: sections.reduce((n, s) => n + s.sub_headings.length, 0) });
       return { sections, cost_usd: cost, model };
     },
   );
@@ -1502,7 +1544,6 @@ async function prepareLearn(userId: string, body: Record<string, unknown>): Prom
 // Section structure: what goes under each heading, so a section is more than a paragraph
 // ---------------------------------------------------------------------------
 
-export const BLOCK_TYPES = ["answer", "paragraph", "bullets", "steps", "table", "example", "data", "subheading", "faq", "quote", "takeaway"] as const;
 
 export const STRUCTURE_SYSTEM = `ROLE
 You plan the inside of each section of a B2B article. The outline gives each section a heading and a one-line purpose. You decide what each section is made of, so the finished article is not just "heading, paragraph, heading, paragraph".
@@ -1547,15 +1588,11 @@ OUTPUT
 const blockSchema = obj({ type: { type: "string", enum: [...BLOCK_TYPES] }, note: str });
 const structureSchema = obj({ sections: list(obj({ position: { type: "integer" }, blocks: list(blockSchema) })) });
 
-function cleanBlocks(blocks: { type: string; note: string }[]): { type: string; note: string }[] {
-  return blocks.filter((b) => (BLOCK_TYPES as readonly string[]).includes(b.type) && b.note?.trim())
-    .map((b) => ({ type: b.type, note: b.note.trim() })).slice(0, 8);
-}
 
-function outlineText(secs: { position: number; heading: string; purpose: string; structure?: unknown }[], withStructure: boolean): string {
+function outlineText(secs: { position: number; heading: string; purpose: string; structure?: unknown; level?: number | null }[], withStructure: boolean): string {
   return secs.map((s) => {
     const blocks = withStructure && Array.isArray(s.structure) ? (s.structure as { type: string; note: string }[]) : [];
-    return `${s.position}. ${s.heading} (${s.purpose})${blocks.map((b) => `\n   - ${b.type}: ${b.note}`).join("")}`;
+    return `${outlinePrefix(s, s.position)}${s.heading} (${s.purpose})${blocks.map((b) => `\n   - ${b.type}: ${b.note}`).join("")}`;
   }).join("\n");
 }
 
@@ -1563,8 +1600,7 @@ async function prepareStructure(userId: string, body: Record<string, unknown>): 
   const piece = await pieceFor(userId, body);
   requireStep(piece, setting<string>(piece, "outline.mode") !== "off", "Section structure");
   if (piece.stage !== "outline") throw new UserError("Structure is planned while the outline is open.");
-  const { data: secs } = await admin.from("piece_sections").select("position, heading, purpose, structure").eq("piece_id", piece.id)
-    .order("position");
+  const { data: secs } = await sectionTexts<OutlineRowDb>(piece.id, "position, heading, purpose, structure");
   if (!secs?.length) throw new UserError("Save an outline first.");
   const { data: serp } = await admin.from("research_items").select("statement").eq("piece_id", piece.id)
     .eq("source_type", "serp").eq("status", "approved");
@@ -1584,7 +1620,10 @@ async function prepareStructure(userId: string, body: Record<string, unknown>): 
     : outlineText(secs, false);
   const user = `${context}\n\n<search_landscape>\n${landscape}\n</search_landscape>\n\n<outline>\n${outlineBlock}\n</outline>`;
   const system = (await promptSet(piece.company_id))("structure", STRUCTURE_SYSTEM)
-    + (onlyMissing ? "\n\nSOME SECTIONS ARE ALREADY PLANNED\nPlan only the sections marked [PLAN THIS ONE]. Sections marked [already planned] stay as they are: use them to avoid repeating the same shape, and return no entry for them." : "");
+    + (onlyMissing ? "\n\nSOME SECTIONS ARE ALREADY PLANNED\nPlan only the sections marked [PLAN THIS ONE]. Sections marked [already planned] stay as they are: use them to avoid repeating the same shape, and return no entry for them." : "")
+    + (secs.some((s) => s.level === 3)
+      ? "\n\nSUB-HEADINGS\nA line marked (sub-heading) is a sub-heading (H3) under the main heading above it. Plan it like any section. A main heading that has sub-headings needs blocks only for its own short opening (usually an answer or a paragraph): never plan a sub-heading's content inside its main heading."
+      : "");
   return task<{ sections: { position: number; blocks: { type: string; note: string }[] }[] }>(
     "outline_structure", "reason", piece, userId, system, user, structureSchema, 2500,
     async (data, cost, model) => {
@@ -1670,6 +1709,10 @@ OUTPUT
 - reply: 1 or 2 sentences: what the edits fix and which gaps you skipped and why.
 - edits: a list. Each has "section" (the section number), "where", "original", "replacement", "check" (the gap's check name) and "reason" (a few words).`;
 
+/** Added to the outline fix prompt when the outline has sub-headings (H3). */
+export const SEO_FIX_LEVELS_NOTE = `SUB-HEADINGS
+Lines marked (sub-heading) sit under the main heading above them. You may edit a sub-heading's heading or purpose, or add blocks to it, but never move one. A section you add is always a main heading: use "after" to say which section it follows, and it is placed after that main heading's last sub-heading. Contract expectations belong to main headings only.`;
+
 const OUTLINE_CHANGE_KINDS = ["edit_title", "edit_section", "add_section", "move_section", "add_block", "edit_block"] as const;
 const fixOutlineSchema = obj({
   reply: str,
@@ -1686,93 +1729,7 @@ const fixOutlineSchema = obj({
   })),
 });
 
-type OutlineChange = {
-  kind: string; position: number; after: number; index: number; heading: string; purpose: string;
-  expectations: number[]; blocks: { type: string; note: string }[]; check: string;
-};
-type OutlineRow = {
-  /** The section's number in the outline before any change; null for a section the changes add. */
-  origin: number | null;
-  heading: string;
-  purpose: string;
-  expectations: number[];
-  blocks: { type: string; note: string }[];
-  /** Set when these changes added or moved the section: the section it was put after (0 = first). Later ones placed after the same section keep their order. */
-  placedAfter?: number;
-};
 
-/**
- * Applies the AI's small changes to the outline and returns the result. Nothing is ever removed: every section and
- * block the outline had is still there afterwards. A change that doesn't make sense (an unknown section, an empty
- * heading, a heading that already exists) is ignored, and at most 8 are applied.
- */
-export function applyOutlineChanges(
-  sections: { position: number; heading: string; purpose: string; expectations: number[]; blocks: { type: string; note: string }[] }[],
-  expectationCount: number,
-  changes: OutlineChange[],
-  currentTitle = "",
-): { rows: OutlineRow[]; title: string | null; summary: { edited: number; added: number; moved: number; blocks: number } } {
-  const rows: OutlineRow[] = sections.map((s) => ({ origin: s.position, heading: s.heading, purpose: s.purpose, expectations: [...s.expectations], blocks: cleanBlocks(s.blocks) }));
-  const byOrigin = (n: number) => rows.find((r) => r.origin === n);
-  const goodNumbers = (nums: number[]) => nums.filter((n) => Number.isInteger(n) && n >= 1 && n <= expectationCount);
-  const headingTaken = (h: string) => rows.some((r) => r.heading.trim().toLowerCase() === h.trim().toLowerCase());
-  const edited = new Set<OutlineRow>();
-  const moved = new Set<OutlineRow>();
-  let added = 0;
-  let blocksAdded = 0;
-
-  /** A place is "first" (0) or just after a section the outline had. Anything else is not a place. */
-  const validAfter = (after: number) => after === 0 || (Number.isInteger(after) && byOrigin(after) !== undefined);
-  const place = (row: OutlineRow, after: number) => {
-    const old = rows.indexOf(row);
-    if (old >= 0) rows.splice(old, 1);
-    let at = 0;
-    if (after > 0) at = rows.indexOf(byOrigin(after)!) + 1;
-    // Sections already put after this same place stay ahead of this one.
-    while (at < rows.length && rows[at].placedAfter === after) at++;
-    row.placedAfter = after;
-    rows.splice(at, 0, row);
-  };
-
-  let title: string | null = null;
-  for (const c of changes.slice(0, 12)) {
-    const row = byOrigin(c.position);
-    if (c.kind === "edit_title") {
-      // The working title: a new one, within a sensible length, that is actually different.
-      const next = c.heading.trim().replace(/\s+/g, " ");
-      if (next && next.length <= 120 && next !== currentTitle.trim()) title = next;
-    } else if (c.kind === "edit_section" && row) {
-      const heading = c.heading.trim();
-      if (heading && heading !== row.heading && !headingTaken(heading)) { row.heading = heading; edited.add(row); }
-      if (c.purpose.trim() && c.purpose.trim() !== row.purpose) { row.purpose = c.purpose.trim(); edited.add(row); }
-      const more = goodNumbers(c.expectations).filter((n) => !row.expectations.includes(n));
-      if (more.length) { row.expectations.push(...more); edited.add(row); }
-    } else if (c.kind === "add_section") {
-      const heading = c.heading.trim();
-      if (!heading || headingTaken(heading) || !validAfter(c.after)) continue;
-      const fresh: OutlineRow = { origin: null, heading, purpose: c.purpose.trim(), expectations: [...new Set(goodNumbers(c.expectations))], blocks: cleanBlocks(c.blocks) };
-      place(fresh, c.after);
-      added += 1;
-    } else if (c.kind === "move_section" && row && c.after !== c.position && validAfter(c.after)) {
-      place(row, c.after);
-      moved.add(row);
-    } else if (c.kind === "add_block" && row) {
-      const fresh = cleanBlocks(c.blocks);
-      // 8 is the most blocks a section keeps (cleanBlocks), so more would be cut on the next save.
-      if (!fresh.length || row.blocks.length + fresh.length > 8) continue;
-      if (c.index >= 1 && c.index <= row.blocks.length) row.blocks.splice(c.index - 1, 0, ...fresh);
-      else row.blocks.push(...fresh);
-      blocksAdded += fresh.length;
-      edited.add(row);
-    } else if (c.kind === "edit_block" && row) {
-      const next = cleanBlocks(c.blocks)[0];
-      if (!next || c.index < 1 || c.index > row.blocks.length) continue;
-      row.blocks[c.index - 1] = next;
-      edited.add(row);
-    }
-  }
-  return { rows, title, summary: { edited: edited.size, added, moved: moved.size, blocks: blocksAdded } };
-}
 const fixFinalSchema = obj({
   reply: str,
   edits: list(obj({
@@ -1802,8 +1759,7 @@ async function prepareSeoFix(userId: string, body: Record<string, unknown>): Pro
 
   if (scope === "outline") {
     if (piece.stage !== "outline") throw new UserError("The outline can be improved while it is open.");
-    const { data: secs } = await admin.from("piece_sections").select("position, heading, purpose, expectation_ids, structure")
-      .eq("piece_id", piece.id).order("position");
+    const { data: secs } = await sectionTexts<OutlineRowDb>(piece.id, "position, heading, purpose, expectation_ids, structure, depth");
     if (!secs?.length) throw new UserError("Save an outline first.");
     const { data: c } = await admin.from("piece_contracts").select("expectations").eq("piece_id", piece.id).single();
     const expectations = (c?.expectations ?? []) as { id: string }[];
@@ -1811,20 +1767,21 @@ async function prepareSeoFix(userId: string, body: Record<string, unknown>): Pro
       .eq("source_type", "serp").eq("status", "approved");
     const landscape = (serp ?? []).map((r) => `- ${r.statement}`).join("\n") || "(none)";
     const context = await contextFor(piece, ["brief", "contract"]);
-    const numbersOf = (s: { expectation_ids: unknown }) =>
-      (s.expectation_ids as string[]).map((id) => expectations.findIndex((e) => e.id === id) + 1).filter((n) => n > 0);
+    const numbersOf = (s: { expectation_ids?: unknown }) =>
+      ((s.expectation_ids ?? []) as string[]).map((id) => expectations.findIndex((e) => e.id === id) + 1).filter((n) => n > 0);
     const blocksOf = (s: { structure?: unknown }) => (Array.isArray(s.structure) ? s.structure : []) as { type: string; note: string }[];
     // Blocks are numbered within their section so the AI can point at one.
     const outline = secs.map((s) =>
-      `${s.position}. ${s.heading} (${s.purpose})${blocksOf(s).map((b, i) => `\n   ${i + 1}. ${b.type}: ${b.note}`).join("")}\n   serves expectations: ${numbersOf(s).join(", ") || "none"}`,
+      `${outlinePrefix(s, s.position)}${s.heading} (${s.purpose})${blocksOf(s).map((b, i) => `\n   ${i + 1}. ${b.type}: ${b.note}`).join("")}\n   serves expectations: ${numbersOf(s).join(", ") || "none"}`,
     ).join("\n");
     const user = `${context}\n\n<search_landscape>\n${landscape}\n</search_landscape>\n\n${gapText}\n\n<outline>\n${outline}\n</outline>`;
     return task<{ reply: string; changes: OutlineChange[] }>(
-      "seo_fix_outline", "reason", piece, userId, prompts("seo_fix.outline", SEO_FIX_OUTLINE), user, fixOutlineSchema, 3000,
+      "seo_fix_outline", "reason", piece, userId,
+      prompts("seo_fix.outline", SEO_FIX_OUTLINE) + (secs.some((s) => s.level === 3) ? `\n\n${SEO_FIX_LEVELS_NOTE}` : ""), user, fixOutlineSchema, 3000,
       async (data, cost, model) => {
         // The AI proposes small changes; they are applied here, and nothing in the outline can be removed by them.
         const { rows, title, summary } = applyOutlineChanges(
-          secs.map((s) => ({ position: s.position, heading: s.heading, purpose: s.purpose, expectations: numbersOf(s), blocks: blocksOf(s) })),
+          secs.map((s) => ({ position: s.position, heading: s.heading, purpose: s.purpose, expectations: numbersOf(s), blocks: blocksOf(s), level: s.level, depth: s.depth })),
           expectations.length,
           data.changes,
           piece.title,
@@ -1835,7 +1792,7 @@ async function prepareSeoFix(userId: string, body: Record<string, unknown>): Pro
           summary,
           // A new working title, when the fix changes it. The screen applies it (and can undo it).
           ...(title !== null ? { title } : {}),
-          sections: rows.map((r) => ({ heading: r.heading, purpose: r.purpose, expectations: r.expectations, blocks: r.blocks })),
+          sections: rows.map((r) => ({ heading: r.heading, purpose: r.purpose, expectations: r.expectations, blocks: r.blocks, level: r.level, depth: r.depth })),
           cost_usd: cost,
           model,
         };
@@ -1899,7 +1856,7 @@ async function prepareSeoVerify(userId: string, body: Record<string, unknown>): 
   const result = saved?.seo_geo_outline as { checks: (Gap & { status: string })[] } | null;
   const flagged = (result?.checks ?? []).filter((c) => c.status === "improve" && !(c as { ignored?: boolean }).ignored);
   if (!flagged.length) throw new UserError("Nothing is flagged.");
-  const { data: secs } = await admin.from("piece_sections").select("position, heading, purpose, structure").eq("piece_id", piece.id).order("position");
+  const { data: secs } = await sectionTexts<OutlineRowDb>(piece.id, "position, heading, purpose, structure");
   if (!secs?.length) throw new UserError("Save an outline first.");
   const { data: serp } = await admin.from("research_items").select("statement").eq("piece_id", piece.id)
     .eq("source_type", "serp").eq("status", "approved");
@@ -1907,7 +1864,7 @@ async function prepareSeoVerify(userId: string, body: Record<string, unknown>): 
   const context = await contextFor(piece, ["brief", "contract"]);
   const outline = secs.map((s) => {
     const blocks = (Array.isArray(s.structure) ? s.structure : []) as { type: string; note: string }[];
-    return `${s.position}. ${s.heading} (${s.purpose})${blocks.map((b) => `\n   - ${b.type}: ${b.note}`).join("")}`;
+    return `${outlinePrefix(s, s.position)}${s.heading} (${s.purpose})${blocks.map((b) => `\n   - ${b.type}: ${b.note}`).join("")}`;
   }).join("\n");
   const issues = flagged.map((g) => `- ${g.check} (${g.label}): saw: ${g.evidence || "n/a"} | suggested fix: ${g.fix}`).join("\n");
   const user = `${context}\n\n<search_landscape>\n${landscape}\n</search_landscape>\n\n<outline>\n${outline}\n</outline>\n\n<issues_to_check>\n${issues}\n</issues_to_check>`;

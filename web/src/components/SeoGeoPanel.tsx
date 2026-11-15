@@ -20,7 +20,7 @@ export interface OutlineFix {
   /** A new working title, when the fix changes it. */
   title?: string;
   /** The whole outline after the changes: every section it had, with the changes made. */
-  sections: { heading: string; purpose: string; expectations: number[]; blocks: Block[] }[];
+  sections: { heading: string; purpose: string; expectations: number[]; blocks: Block[]; level?: number; depth?: string }[];
 }
 
 interface TextEdit {

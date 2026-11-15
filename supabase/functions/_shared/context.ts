@@ -3,6 +3,7 @@
 
 import { admin } from "./supabase.ts";
 import { UserError } from "./cors.ts";
+import { OUTLINE_LEGEND, outlinePrefix } from "./assemble.ts";
 
 export type Block =
   | "brief"
@@ -87,10 +88,21 @@ export interface SectionRow {
  */
 export interface SectionText { heading: string; content: string; level?: number | null; ai_draft?: string | null }
 
-export async function sectionTexts(pieceId: string, columns: string): Promise<{ data: SectionText[] | null; error: { message: string } | null }> {
+/** The columns of a section row the outline work reads. Which of them are present depends on the columns asked for. */
+export interface OutlineRowDb {
+  position: number;
+  heading: string;
+  purpose: string;
+  level?: number | null;
+  depth?: string | null;
+  expectation_ids?: string[];
+  structure?: unknown;
+}
+
+export async function sectionTexts<T extends object = SectionText>(pieceId: string, columns: string): Promise<{ data: T[] | null; error: { message: string } | null }> {
   // The column list is built at run time, so the client can't work out the row type: it is stated here.
   const read = (cols: string) => admin.from("piece_sections").select(cols).eq("piece_id", pieceId).order("position") as unknown as
-    PromiseLike<{ data: SectionText[] | null; error: { message: string } | null }>;
+    PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
   const r = await read(`${columns}, level`);
   if (r.error && /\blevel\b/i.test(r.error.message)) return await read(columns);
   return r;
@@ -190,10 +202,10 @@ Audience notes: ${piece.audience_notes || "(none)"}${
     }
   }
   if (blocks.includes("outline")) {
-    const { data } = await admin.from("piece_sections").select("position, heading, purpose").eq("piece_id", piece.id)
-      .order("position");
+    const { data } = await sectionTexts<OutlineRowDb>(piece.id, "position, heading, purpose");
     if (data?.length) {
-      parts.push(`<outline>\n${data.map((s) => `${s.position}. ${s.heading}${s.purpose ? ` (${s.purpose})` : ""}`).join("\n")}\n</outline>`);
+      const legend = data.some((s) => s.level === 3) ? `${OUTLINE_LEGEND}\n` : "";
+      parts.push(`<outline>\n${legend}${data.map((s) => `${outlinePrefix(s, s.position)}${s.heading}${s.purpose ? ` (${s.purpose})` : ""}`).join("\n")}\n</outline>`);
     }
   }
   if (blocks.includes("piece_items")) {

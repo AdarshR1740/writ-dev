@@ -114,10 +114,10 @@ export function WritingStep({ piece, onChanged, onContinue, onBusyChange, finish
           </button>
         )}
         {sections.map((s) => (
-          <button key={s.id} type="button" className={`section-link${!showAll && !showDraft && !showStart && s.id === current.id ? " active" : ""}`} disabled={busyRun} onClick={() => setSelected(s.id)}>
+          <button key={s.id} type="button" className={`section-link${s.level === 3 ? " is-sub" : ""}${!showAll && !showDraft && !showStart && s.id === current.id ? " active" : ""}`} disabled={busyRun} onClick={() => setSelected(s.id)}>
             <span className={`dot ${s.status === "written" ? "done" : s.id === current.id ? "pending" : ""}`} />
             <span className="stack" style={{ gap: 0 }}>
-              <span>{s.position}. {s.heading}</span>
+              <span>{s.level === 3 ? "" : `${s.position}. `}{s.heading}</span>
               <span className="small faint">{autoPrepare && isUnprepared(s) && !manual.has(s.id) ? "Not prepared" : STATUS_LABEL[s.status]}</span>
             </span>
           </button>

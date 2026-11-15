@@ -18,3 +18,14 @@ export function headingLine(row: Pick<AssemblyRow, "heading" | "level">): string
 export function assemble(rows: AssemblyRow[], opts: { trim?: boolean } = {}): string {
   return rows.map((r) => `${headingLine(r)}\n\n${opts.trim ? r.content.trim() : r.content}`).join("\n\n");
 }
+
+/**
+ * The lead-in of one outline line for the AI to read: its number, and for a sub-heading an indent and a mark, so the model
+ * sees it sits under the main heading above it.
+ */
+export function outlinePrefix(row: { level?: number | null }, n: number): string {
+  return row.level === 3 ? `   ${n}. (sub-heading) ` : `${n}. `;
+}
+
+/** Said once above an outline that has sub-headings. */
+export const OUTLINE_LEGEND = "(A line marked sub-heading sits under the main heading above it.)";
