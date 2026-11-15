@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getPiece, getSection, saveSectionDraft, WritError } from "./writ.js";
+import { getPiece, getSection, saveOutline, saveSectionDraft, WritError } from "./writ.js";
 
 const PIECE = "22222222-2222-4222-8222-222222222222";
 const S1 = "11111111-1111-4111-8111-111111111111";
@@ -95,5 +95,77 @@ describe("saveSectionDraft for a sub-heading", () => {
     // A main heading keeps taking ### as before.
     const ok = await saveSectionDraft(fake().db, S2, "### Part\nText");
     expect(ok.saved).toBe(true);
+  });
+});
+
+/** A stand-in that records save_outline calls. */
+function outlineDb(existing: unknown[] = []) {
+  const rpcs: { fn: string; args: Record<string, unknown> }[] = [];
+  const tables: Record<string, unknown> = {
+    pieces: { id: PIECE, code: "SI-0001", title: "T", stage: "outline", company_id: "c", recipe: {}, analysis: null },
+    piece_contracts: { expectations: [{ id: "e1", text: "First" }, { id: "e2", text: "Second" }] },
+  };
+  const db = {
+    from(table: string) {
+      const q: Record<string | symbol, unknown> = new Proxy({}, {
+        get(_t, prop) {
+          if (prop === "maybeSingle") return async () => ({ data: tables[table] ?? null, error: null });
+          if (prop === "then") return (resolve: (v: unknown) => void) => resolve({ data: table === "piece_sections" ? existing : [], error: null });
+          return () => q;
+        },
+      });
+      return q;
+    },
+    rpc: async (fn: string, args: Record<string, unknown>) => { rpcs.push({ fn, args }); return { data: null, error: null }; },
+  } as unknown as SupabaseClient;
+  return { db, rpcs };
+}
+
+describe("saveOutline with sub-headings (additive)", () => {
+  it("sends nothing new when no level or depth is given, so older callers are unchanged", async () => {
+    const { db, rpcs } = outlineDb();
+    await saveOutline(db, "SI-0001", [{ heading: "One", covers: [1] }, { heading: "Two" }]);
+    expect(rpcs[0].args.sections).toEqual([
+      { heading: "One", purpose: "", expectation_ids: ["e1"] },
+      { heading: "Two", purpose: "", expectation_ids: [] },
+    ]);
+  });
+
+  it("passes level and depth through, and gives a sub-heading no scope points", async () => {
+    const { db, rpcs } = outlineDb();
+    await saveOutline(db, "SI-0001", [
+      { heading: "Emerging technologies", level: 2, covers: [1] },
+      { heading: "Quantum", level: 3, depth: "deep", covers: [2] },
+    ]);
+    expect(rpcs[0].args.sections).toEqual([
+      { heading: "Emerging technologies", purpose: "", expectation_ids: ["e1"], level: 2 },
+      { heading: "Quantum", purpose: "", expectation_ids: [], level: 3, depth: "deep" },
+    ]);
+  });
+
+  it("refuses a first sub-heading, a bad level or depth, and raises the cap only when sub-headings are used", async () => {
+    const { db } = outlineDb();
+    await expect(saveOutline(db, "SI-0001", [{ heading: "A", level: 3 }])).rejects.toThrow(/start with a main heading/);
+    await expect(saveOutline(db, "SI-0001", [{ heading: "A", level: 4 }])).rejects.toThrow(/level is 2/);
+    await expect(saveOutline(db, "SI-0001", [{ heading: "A", depth: "huge" }])).rejects.toThrow(/depth is short/);
+    await expect(saveOutline(db, "SI-0001", Array.from({ length: 13 }, (_, i) => ({ heading: `S${i}` })))).rejects.toThrow(/1 to 12/);
+    const many = [{ heading: "Main", level: 2 }, ...Array.from({ length: 20 }, (_, i) => ({ heading: `Sub ${i}`, level: 3 }))];
+    await expect(saveOutline(db, "SI-0001", many)).resolves.toBeTruthy();
+  });
+});
+
+describe("saveOutline for an older caller that sends an outline with sub-headings back without levels", () => {
+  const existing = [
+    { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", structure: null, level: 2 },
+    ...Array.from({ length: 14 }, (_, i) => ({ id: `bbbbbbbb-bbbb-4bbb-8bbb-${String(i).padStart(12, "0")}`, structure: null, level: 3 })),
+  ];
+  const resend = existing.map((e, i) => ({ id: e.id, heading: i === 0 ? "Main" : `Sub ${i}`, covers: [1] }));
+  it("is not refused for having more than 12 rows, and a kept sub-heading's points are dropped", async () => {
+    const { db, rpcs } = outlineDb(existing);
+    await saveOutline(db, "SI-0001", resend);
+    const sent = rpcs[0].args.sections as { expectation_ids: string[]; level?: number }[];
+    expect(sent).toHaveLength(15);
+    expect(sent[0].expectation_ids).toEqual(["e1"]);
+    expect(sent.slice(1).every((s) => s.expectation_ids.length === 0 && s.level === undefined)).toBe(true);
   });
 });

@@ -575,30 +575,47 @@ export async function completeResearch(db: SupabaseClient, ref: string) {
 const MAX_OUTLINE_SECTIONS = 12;
 
 /** Saves the outline draft. "covers" lists the numbers (1-based) of the scope points a section serves. Open outlines only. */
-export async function saveOutline(db: SupabaseClient, ref: string, sections: { heading: string; purpose?: string; covers?: number[]; id?: string }[]) {
+const DEPTHS = ["short", "standard", "deep"];
+
+export async function saveOutline(db: SupabaseClient, ref: string, sections: { heading: string; purpose?: string; covers?: number[]; id?: string; level?: number; depth?: string }[]) {
   const piece = await findPiece(db, ref);
   if (piece.stage !== "outline") throw new WritError(`The outline is not open (this piece is at ${piece.stage}).`);
-  if (!sections.length || sections.length > MAX_OUTLINE_SECTIONS) throw new WritError(`Give 1 to ${MAX_OUTLINE_SECTIONS} sections.`);
+  if (!sections.length) throw new WritError(`Give 1 to ${MAX_OUTLINE_SECTIONS} sections.`);
+  if (sections.some((s) => s.level !== undefined && s.level !== 2 && s.level !== 3)) throw new WritError("A level is 2 (main heading) or 3 (sub-heading).");
+  if (sections.some((s) => s.depth !== undefined && !DEPTHS.includes(s.depth))) throw new WritError("A depth is short, standard or deep.");
+  if (sections[0].level === 3) throw new WritError("The outline has to start with a main heading (level 2).");
   const contract = await db.from("piece_contracts").select("expectations").eq("piece_id", piece.id).maybeSingle();
   if (contract.error) throw new WritError(`Could not read the scope: ${contract.error.message}`);
   const exp = ((contract.data as { expectations?: { id: string; text: string }[] } | null)?.expectations) ?? [];
   // Writ's save_outline clears a kept section's planned structure unless it is sent back, so send back what is there.
-  const existing = must(await db.from("piece_sections").select("id, structure").eq("piece_id", piece.id), "Could not read the outline") as
-    { id: string; structure: unknown }[];
+  const existing = must(await sectionRows(db, piece.id, "id, structure") as { data: unknown; error: { message: string } | null }, "Could not read the outline") as unknown as
+    { id: string; structure: unknown; level?: number }[];
   const structureOf = new Map(existing.map((e) => [e.id, e.structure]));
+  const levelOf = new Map(existing.map((e) => [e.id, e.level === 3 ? 3 : 2]));
+  // Sub-headings (level 3) count too, so a section with several leaves room: up to 40 rows in all. An outline that already has
+  // sub-headings keeps that room when an older caller sends it back without levels.
+  const cap = sections.some((s) => s.level === 3) || existing.some((e) => e.level === 3) ? 40 : MAX_OUTLINE_SECTIONS;
+  if (sections.length > cap) throw new WritError(`Give 1 to ${cap} sections${cap > MAX_OUTLINE_SECTIONS ? " and sub-headings" : ""}.`);
   const covered = new Set<number>();
   const payload = sections.map((s) => {
     const heading = s.heading.trim();
     if (!heading || heading.length > 300) throw new WritError("Each section needs a heading of 1 to 300 characters.");
     // A format with no scope step has no scope points to cover: "covers" is then ignored rather than refused.
-    const ids = (exp.length ? (s.covers ?? []) : []).map((n) => {
+    // A sub-heading owes no scope points: its main heading does. A section sent without a level is the level it has now.
+    const keepId = s.id && UUID.test(s.id.trim()) ? s.id.trim() : undefined;
+    const effective = s.level ?? (keepId ? levelOf.get(keepId) : undefined) ?? 2;
+    const ids = (exp.length && effective !== 3 ? (s.covers ?? []) : []).map((n) => {
       if (!Number.isInteger(n) || n < 1 || n > exp.length) throw new WritError(`"covers" must use scope point numbers 1 to ${exp.length}.`);
       covered.add(n);
       return exp[n - 1].id;
     });
     const keep = s.id && UUID.test(s.id.trim()) ? s.id.trim() : undefined;
     const structure = keep ? structureOf.get(keep) : undefined;
-    return { ...(keep ? { id: keep } : {}), heading, purpose: (s.purpose ?? "").trim(), expectation_ids: ids, ...(Array.isArray(structure) ? { structure } : {}) };
+    // A section sent without a level keeps the one it has (a new one is a main heading), so older callers are unchanged.
+    return {
+      ...(keep ? { id: keep } : {}), heading, purpose: (s.purpose ?? "").trim(), expectation_ids: ids, ...(Array.isArray(structure) ? { structure } : {}),
+      ...(s.level === 2 || s.level === 3 ? { level: s.level } : {}), ...(s.depth ? { depth: s.depth } : {}),
+    };
   });
   const r = await db.rpc("save_outline", { target_piece: piece.id, sections: payload });
   if (r.error) throw new WritError(`Could not save the outline: ${r.error.message}`);

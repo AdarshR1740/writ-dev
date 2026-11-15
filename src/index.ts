@@ -214,7 +214,9 @@ server.registerTool("writ_save_outline", {
       purpose: z.string().optional().describe("One line: what this section tells the reader"),
       covers: z.array(z.number().int()).optional().describe("Numbers of the scope points (1, 2, ...) this section serves"),
       id: z.string().optional().describe("The section id, when keeping an existing section"),
-    })).describe("1 to 12 sections, usually 4 to 8"),
+      level: z.number().int().min(2).max(3).optional().describe("2 for a main heading (H2), 3 for a sub-heading (H3) under the main heading above it. Omit to keep a section's level (a new one is a main heading). Sub-headings are only for formats with a free outline, and a sub-heading has no scope points"),
+      depth: z.enum(["short", "standard", "deep"]).optional().describe("How much a sub-heading should say. Omit to keep it"),
+    })).describe("1 to 12 sections, usually 4 to 8 (up to 40 rows when sub-headings are included)"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
 }, ({ piece, sections }) => run((c) => saveOutline(c, piece, sections)));
