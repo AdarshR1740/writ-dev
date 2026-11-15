@@ -65,6 +65,7 @@ RULES
 - Do not write the section's own heading (the writer's H2), and never use "#" or "##". No preamble, no closing summary, no "In conclusion".
 - If a planned structure is given, build the section from its blocks in order: answer = a short standalone answer of about 40 to 60 words; bullets = a "- " list; steps = a numbered list; table = a markdown table; subheading = a "### " line; faq = the question in bold, then a short answer; example, data, quote, takeaway = a short paragraph of that kind.
 - Organise the section with ### headings for each part that stands on its own (a steps, table, example, data, faq or subheading block, or a group of points for one planned sub-section), and #### for a smaller part inside one. A short opening comes before the first heading. A section with only one or two small parts needs no headings. Headings are short noun phrases or plain statements, never "Introduction", "Overview" or "Conclusion", and never a question.
+- If writ_get_section says the section's level is 3, it is a sub-heading (H3) under a main heading: its own heading is added separately, so write no heading of your own and use #### only for a smaller part inside it.
 - Do not number the points or write the section as a list of them.
 
 FINISH

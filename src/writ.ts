@@ -36,6 +36,9 @@ interface SectionRow {
   id: string;
   piece_id: string;
   position: number;
+  /** 2 for a main heading (H2), 3 for a sub-heading (H3) under the main heading above it. Missing on a Writ database that predates sub-headings. */
+  level?: number;
+  depth?: string;
   heading: string;
   purpose: string;
   status: "research" | "brief" | "writing" | "written";
@@ -62,13 +65,30 @@ export async function findPiece(db: SupabaseClient, ref: string): Promise<PieceR
   return must(r as { data: PieceRow | null; error: { message: string } | null }, `Piece ${key}`);
 }
 
+/**
+ * A piece's sections with their heading level and depth. A Writ database that predates sub-headings has no such columns;
+ * its sections are all main headings, so the read is repeated without them.
+ */
+async function sectionRows(db: SupabaseClient, pieceId: string, columns: string) {
+  const r = await db.from("piece_sections").select(`${columns}, level, depth`).eq("piece_id", pieceId).order("position");
+  if (r.error && /\b(level|depth)\b/i.test(r.error.message)) return db.from("piece_sections").select(columns).eq("piece_id", pieceId).order("position");
+  return r;
+}
+
+/** The main heading a row sits under: the nearest level 2 row before it. Empty for a main heading. */
+function parentOf<T extends { level?: number; heading: string }>(rows: T[], index: number): string {
+  if (rows[index].level !== 3) return "";
+  for (let i = index - 1; i >= 0; i -= 1) if (rows[i].level !== 3) return rows[i].heading;
+  return "";
+}
+
 export async function getPiece(db: SupabaseClient, ref: string) {
   const piece = await findPiece(db, ref);
   const [contract, sections] = await Promise.all([
     db.from("piece_contracts").select("core_question, expectations, confirmed_at").eq("piece_id", piece.id).maybeSingle(),
-    db.from("piece_sections").select("id, position, heading, purpose, status, expectation_ids, content, ai_draft, points").eq("piece_id", piece.id).order("position"),
+    sectionRows(db, piece.id, "id, position, heading, purpose, status, expectation_ids, content, ai_draft, points"),
   ]);
-  const rows = must(sections, "Could not read the outline") as Pick<SectionRow, "id" | "position" | "heading" | "purpose" | "status" | "expectation_ids" | "content" | "ai_draft" | "points">[];
+  const rows = must(sections as { data: unknown; error: { message: string } | null }, "Could not read the outline") as unknown as Pick<SectionRow, "id" | "position" | "level" | "depth" | "heading" | "purpose" | "status" | "expectation_ids" | "content" | "ai_draft" | "points">[];
   return {
     code: piece.code,
     title: piece.title,
@@ -81,9 +101,12 @@ export async function getPiece(db: SupabaseClient, ref: string) {
     ai_drafts_allowed: piece.recipe?.writing?.ai_draft === true,
     workflow: workflowOf(piece.recipe),
     reader_contract: contract.data ?? null,
-    sections: rows.map((s) => ({
+    sections: rows.map((s, i) => ({
       id: s.id,
       position: s.position,
+      level: s.level === 3 ? 3 : 2,
+      depth: s.depth ?? "standard",
+      parent: parentOf(rows, i) || undefined,
       heading: s.heading,
       purpose: s.purpose,
       status: s.status,
@@ -131,17 +154,19 @@ export async function getSection(db: SupabaseClient, sectionId: string) {
   const pieceRow = must(await db.from("pieces").select("code, title, topic, primary_keyword, goal, audience_notes, company_id, format_id, recipe").eq("id", s.piece_id).maybeSingle(), "Piece") as
     Pick<PieceRow, "code" | "title" | "topic" | "primary_keyword" | "goal" | "audience_notes" | "company_id" | "format_id" | "recipe">;
   const [outline, research, contract] = await Promise.all([
-    db.from("piece_sections").select("position, heading, purpose").eq("piece_id", s.piece_id).order("position"),
+    sectionRows(db, s.piece_id, "id, position, heading, purpose"),
     sectionResearch(db, s.piece_id, s.id),
     db.from("piece_contracts").select("core_question, expectations").eq("piece_id", s.piece_id).maybeSingle(),
   ]);
   const cite = (id: string) => research.find((r) => r.id === id)?.n;
   const points = s.points?.points ?? [];
+  const outlineRows = must(outline as { data: unknown; error: { message: string } | null }, "Could not read the outline") as unknown as { id: string; position: number; level?: number; heading: string; purpose: string }[];
+  const at = outlineRows.findIndex((r) => r.id === s.id);
   return {
     piece: { code: pieceRow.code, title: pieceRow.title, topic: pieceRow.topic, primary_keyword: pieceRow.primary_keyword, goal: pieceRow.goal, audience_notes: pieceRow.audience_notes },
     reader_question: contract.data?.core_question ?? "",
-    outline: must(outline, "Could not read the outline"),
-    section: { id: s.id, position: s.position, heading: s.heading, purpose: s.purpose, status: s.status, planned_structure: s.structure ?? [] },
+    outline: outlineRows.map((r) => ({ position: r.position, level: r.level === 3 ? 3 : 2, heading: r.heading, purpose: r.purpose })),
+    section: { id: s.id, position: s.position, level: s.level === 3 ? 3 : 2, depth: s.depth ?? "standard", parent: (at >= 0 ? parentOf(outlineRows, at) : "") || undefined, heading: s.heading, purpose: s.purpose, status: s.status, planned_structure: s.structure ?? [] },
     talking_points: points.length
       ? points.map((p, i) => ({
         n: i + 1, point: p.point, direction: p.direction || undefined, for: p.sub_section || undefined,
@@ -166,8 +191,10 @@ export async function saveSectionDraft(db: SupabaseClient, sectionId: string, te
   if (!body) throw new WritError("The draft is empty.");
   if (body.length > 60000) throw new WritError("The draft is too long for one section.");
   if (/^#{1,2}\s/m.test(body)) throw new WritError("Remove any # or ## headings: the section's own heading is added separately. Use ### and ####.");
-  const s = must(await db.from("piece_sections").select("id, piece_id, status, content, heading, ai_draft").eq("id", sectionId.trim()).maybeSingle(), "Section") as
-    Pick<SectionRow, "id" | "piece_id" | "status" | "content" | "heading" | "ai_draft">;
+  const s = must(await db.from("piece_sections").select("*").eq("id", sectionId.trim()).maybeSingle(), "Section") as
+    Pick<SectionRow, "id" | "piece_id" | "level" | "status" | "content" | "heading" | "ai_draft">;
+  // A sub-heading's own heading is added when the piece is put together, and anything inside it is #### at most.
+  if (s.level === 3 && /^#{1,3}\s/m.test(body)) throw new WritError("This section is a sub-heading (H3): its own heading is added separately, so use #### for anything inside it.");
   if (s.status === "written") throw new WritError("This section is already marked as written. Reopen it in Writ first.");
   if (s.status === "research") throw new WritError("This section isn't prepared yet. Prepare it in Writ (research, then talking points or a brief) first.");
   const piece = must(await db.from("pieces").select("recipe").eq("id", s.piece_id).maybeSingle(), "Piece") as Pick<PieceRow, "recipe">;
@@ -727,8 +754,8 @@ export async function getCheckInput(db: SupabaseClient, ref: string, sectionId?:
       scope_points_owed: owed.map((e) => ({ n: all.findIndex((x) => x.id === e.id) + 1, text: e.text })).map((e, i) => ({ n: i + 1, text: e.text })),
     };
   }
-  const secs = must(await db.from("piece_sections").select("heading, content").eq("piece_id", piece.id).order("position"), "Could not read the sections") as { heading: string; content: string }[];
-  const text = secs.map((x) => `## ${x.heading}\n\n${x.content}`).join("\n\n");
+  const secs = must(await sectionRows(db, piece.id, "heading, content") as { data: unknown; error: { message: string } | null }, "Could not read the sections") as unknown as { heading: string; content: string; level?: number }[];
+  const text = secs.map((x) => `${x.level === 3 ? "###" : "##"} ${x.heading}\n\n${x.content}`).join("\n\n");
   if (!secs.some((x) => x.content.trim())) throw new WritError("Nothing is written yet, so there is nothing to check.");
   const serp = must(await db.from("research_items").select("statement").eq("piece_id", piece.id).eq("source_type", "serp").eq("status", "approved"), "Could not read the research") as { statement: string }[];
   return {
