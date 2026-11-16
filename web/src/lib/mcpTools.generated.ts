@@ -454,7 +454,7 @@ export const MCP_REFERENCE: McpReference = {
       "tools": [
         {
           "name": "writ_save_analysis",
-          "summary": "Saves the gap analysis: whether the scope and research still match the topic, the gaps, and suggestions for the scope.",
+          "summary": "Saves the gap analysis: whether the scope and research still match the topic, the gaps, and suggestions for the scope. Refused, with a clear message, while the writer is editing it in Writ.",
           "when": "After Claude runs the analysis.",
           "effect": "saves",
           "needsApproval": false,
@@ -499,7 +499,7 @@ export const MCP_REFERENCE: McpReference = {
         },
         {
           "name": "writ_mark_findings",
-          "summary": "Records your decisions on the analysis findings: ignored, resolved or open again.",
+          "summary": "Records your decisions on the analysis findings: ignored, resolved or open again. Refused, with a clear message, while the writer is editing it in Writ.",
           "when": "When you go through the findings.",
           "effect": "saves",
           "needsApproval": true,
@@ -520,7 +520,7 @@ export const MCP_REFERENCE: McpReference = {
         },
         {
           "name": "writ_apply_alignment_fixes",
-          "summary": "Applies the fixes you chose: reject research, edit, remove or add scope points, and add sections. Works only while the outline is open, and Writ can undo the fixes afterwards.",
+          "summary": "Applies the fixes you chose: reject research, edit, remove or add scope points, and add sections. Works only while the outline is open, and Writ can undo the fixes afterwards. Refused, with a clear message, while the writer is editing it in Writ.",
           "when": "After you pick which fixes to apply.",
           "effect": "saves",
           "needsApproval": true,
@@ -547,7 +547,7 @@ export const MCP_REFERENCE: McpReference = {
         },
         {
           "name": "writ_add_expert_answer",
-          "summary": "Saves your own answer to a gap's expert question as an insight card and approved research.",
+          "summary": "Saves your own answer to a gap's expert question as an insight card and approved research. Refused, with a clear message, while the writer is editing it in Writ.",
           "when": "When you answer a question only you can answer.",
           "effect": "saves",
           "needsApproval": true,
@@ -573,7 +573,7 @@ export const MCP_REFERENCE: McpReference = {
       "tools": [
         {
           "name": "writ_save_outline",
-          "summary": "Saves the outline: sections in order, each with a heading, a one-line purpose and the scope points it serves, and (for free outlines) sub-headings. Sections you keep keep their text and research.",
+          "summary": "Saves the outline: sections in order, each with a heading, a one-line purpose and the scope points it serves, and (for free outlines) sub-headings. Sections you keep keep their text and research. Refused, with a clear message, while the writer is editing it in Writ.",
           "when": "When you have agreed the outline.",
           "effect": "saves",
           "needsApproval": false,
@@ -594,7 +594,7 @@ export const MCP_REFERENCE: McpReference = {
         },
         {
           "name": "writ_confirm_outline",
-          "summary": "Confirms the outline, which moves the piece on to writing.",
+          "summary": "Confirms the outline, which moves the piece on to writing. Refused, with a clear message, while the writer is editing it in Writ.",
           "when": "Only after you approve the outline.",
           "effect": "moves the piece on",
           "needsApproval": true,
@@ -656,7 +656,7 @@ export const MCP_REFERENCE: McpReference = {
         },
         {
           "name": "writ_save_section_points",
-          "summary": "Saves a section's talking points, then has Writ finish the section's research step and confirm its brief. That moves the section to writing, so it is ready to draft.",
+          "summary": "Saves a section's talking points, then has Writ finish the section's research step and confirm its brief. That moves the section to writing, so it is ready to draft. Refused, with a clear message, while the writer is editing it in Writ.",
           "when": "When the points for a section are agreed.",
           "effect": "saves",
           "needsApproval": false,
@@ -677,7 +677,7 @@ export const MCP_REFERENCE: McpReference = {
         },
         {
           "name": "writ_save_section_draft",
-          "summary": "Saves a drafted section as an AI draft for you to review in Writ. It becomes the section's text only if you have written none (or the text is still exactly the previous AI draft, untouched), and never overwrites text you wrote.",
+          "summary": "Saves a drafted section as an AI draft for you to review in Writ. It becomes the section's text only if you have written none (or the text is still exactly the previous AI draft, untouched), and never overwrites text you wrote. Refused, with a clear message, while the writer is editing it in Writ.",
           "when": "After Claude drafts a section.",
           "effect": "saves",
           "needsApproval": false,

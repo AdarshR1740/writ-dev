@@ -130,4 +130,16 @@ describe("states that should be flagged", () => {
     expect(ids(f)).toEqual([]);
     expect(describePiece(f).sees.outline).toMatch(/one section/);
   });
+
+  it("notes who is editing the outline or a section, so a save that would be refused is not a surprise", () => {
+    const f = mcpPiece({ locks: [
+      { scope: "outline", holder: "Adarsh", kind: "person", since: "10:02 UTC" },
+      { scope: "section", section: "Scouting", holder: "Claude (for Adarsh)", kind: "ai", since: "10:05 UTC" },
+    ] });
+    const concerns = describePiece(f).concerns;
+    expect(concerns.find((c) => c.id === "locked-outline")).toMatchObject({ severity: "note", step: "outline" });
+    expect(concerns.find((c) => c.id === "locked-section-Scouting")).toMatchObject({ severity: "note", step: "writing" });
+    expect(describePiece(f).concerns.some((c) => c.severity === "problem")).toBe(false);
+    expect(ids(mcpPiece())).not.toContain("locked-outline");
+  });
 });

@@ -61,7 +61,7 @@ export function ClaudePage() {
         <h1>Writ in Claude</h1>
         <Lede more={<>
           Claude connects to Writ through a small server on your computer, signed in as you. It runs on your own Claude subscription, so there is no AI key to set up for it.
-          You approve every step that changes the direction of a piece; what Claude saves stays editable here. Start with <code>/writ:onboarding</code> in Claude if you are new.
+          You approve every step that changes the direction of a piece; what Claude saves stays editable here. While you are editing the outline or a section, Claude's saves to it are refused until you finish (and a banner here shows when Claude is the one editing). Start with <code>/writ:onboarding</code> in Claude if you are new.
           This page is generated from the server itself (version {MCP_REFERENCE.version}), so it always lists the tools that exist.
         </>}>
           What each of Writ's {toolCount} tools for Claude does, and the prompts that string them together.

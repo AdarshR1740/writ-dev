@@ -1,12 +1,26 @@
 import { createClient } from "@supabase/supabase-js";
+import { CLIENT_ID } from "./clientId";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
 export const configured = Boolean(url && anonKey);
 
+/**
+ * Says which tab is asking, on database requests only (not on edge function calls, which have their own allowed headers), so the
+ * database can tell this tab from another one and from Claude when it checks edit locks.
+ */
+export const withClientId: typeof fetch = (input, init) => {
+  const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (!href.includes("/rest/v1/")) return fetch(input, init);
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  headers.set("x-writ-client", CLIENT_ID);
+  return fetch(input, { ...init, headers });
+};
+
 export const supabase = createClient(url ?? "http://localhost", anonKey ?? "missing", {
   auth: { persistSession: true, autoRefreshToken: true },
+  global: { fetch: withClientId },
 });
 
 /** Call one of our edge functions; throws an Error with the server's message. */
@@ -29,7 +43,9 @@ export async function callFunction<T>(name: string, body: Record<string, unknown
 }
 
 export function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (err && typeof err === "object" && "message" in err) return String((err as { message: unknown }).message);
-  return "Something went wrong.";
+  const raw = err instanceof Error ? err.message
+    : err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message)
+    : "Something went wrong.";
+  // A change refused because someone else holds the edit lock: say it plainly.
+  return raw.startsWith("edit_locked:") ? `${raw.replace(/^edit_locked:\s*/, "")}. Use "Take over" in the banner to continue, or wait until they finish.` : raw;
 }

@@ -13,6 +13,8 @@ import { SourceLinks } from "./Links";
 import { RichEditor, type RichEditorHandle } from "./RichEditor";
 import { RevisePanel } from "./Revise";
 import { writingState } from "../lib/stepViews";
+import { useEditLock } from "../lib/locks";
+import { LockBanner } from "./LockBanner";
 import { AiWritePanel, DraftOverview, FullDraft, PointsList, PreparePanel, StartChoice, isUnprepared } from "./SectionPrep";
 
 /** The state of one check against the text as it is now. A tick shows only while the text is unchanged since the check. */
@@ -367,13 +369,29 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
   const { data: items } = useItems(piece.id, itemScope(recipe, section.id));
   const timer = useRef<number | null>(null);
   const written = section.status === "written";
+  // One person (or one Claude) at a time writes a section. The lock is taken on the first edit.
+  const lock = useEditLock(piece.id, "section", section.id, !written);
+  const lockedOut = lock.other !== null;
+  // Someone saved different text while this tab was open (the server's version is kept here): the writer chooses which to keep.
+  const [conflict, setConflict] = useState<string | null>(null);
+  async function serverContent(): Promise<string | null> {
+    const { data: row } = await supabase.from("piece_sections").select("content").eq("id", section.id).single();
+    return row ? (row.content as string) : null;
+  }
+  useEffect(() => {
+    if (text !== savedText && !written) void lock.ensure();
+  }, [text]);
   const number = (id: string | null) => (id ? (items ?? []).findIndex((i) => i.id === id) + 1 : 0);
 
   // Autosave a moment after typing stops.
   useEffect(() => {
-    if (text === savedText) return;
+    if (text === savedText || lock.other || conflict !== null) return;
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(async () => {
+      // Someone else may have taken the section since the last edit: then nothing is saved, and the banner says why.
+      if (!(await lock.ensure())) return;
+      const server = await serverContent();
+      if (server !== null && server !== savedText) { setConflict(server); return; }
       setSaving(true);
       const { error: err } = await supabase.from("piece_sections").update({ content: text }).eq("id", section.id);
       setSaving(false);
@@ -384,10 +402,13 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
       }
     }, 900);
     return () => { if (timer.current) window.clearTimeout(timer.current); };
-  }, [text, savedText, section.id]);
+  }, [text, savedText, section.id, lock.other, conflict]);
 
   async function flush() {
     if (text === savedText) return;
+    if (!(await lock.ensure())) throw new Error("Someone else is editing this section. Take over from the banner to save your changes.");
+    const server = await serverContent();
+    if (server !== null && server !== savedText) { setConflict(server); throw new Error("This section changed while you were editing. Choose which version to keep in the banner above the text."); }
     must(await supabase.from("piece_sections").update({ content: text }).eq("id", section.id).select("id"));
     setSavedText(text);
     setSaves((s) => ({ rev: section.content_rev, n: (s.rev === section.content_rev ? s.n : 0) + 1 }));
@@ -464,7 +485,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
               </a>
             )}
             <span className="spacer" />
-            {!written && recipe.writing.ai_draft && text.trim() && (
+            {!written && !lockedOut && recipe.writing.ai_draft && text.trim() && (
               <button type="button" className="btn btn-small" aria-expanded={reviseOpen} onClick={() => setReviseOpen((o) => !o)}>Revise</button>
             )}
             {hasSide && (
@@ -491,17 +512,32 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
               <RevisePanel sectionId={section.id} text={text} editor={editorRef} onApply={setText} onClose={() => setReviseOpen(false)} />
             </div>
           )}
+          {conflict !== null && (
+            <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--rule)" }}>
+              <div className="notice row" role="alert" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                <span className="small"><strong>This section changed while you were editing.</strong> Someone else saved a different version. Your latest edits are not saved yet.</span>
+                <span className="spacer" />
+                <button type="button" className="btn btn-small" onClick={() => { setText(conflict); setSavedText(conflict); setConflict(null); onChanged(); }}>Use the saved version</button>
+                <button type="button" className="btn btn-quiet btn-small" onClick={() => { setSavedText(conflict); setConflict(null); }}>Keep my version</button>
+              </div>
+            </div>
+          )}
+          {lock.other && (
+            <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--rule)" }}>
+              <LockBanner holder={lock.other} what="this section" unsaved={text !== savedText} problem={lock.problem} onTakeOver={() => void lock.takeOver()} />
+            </div>
+          )}
           {/* The section's own heading: its H2 in the finished piece. It starts as the outline's heading and can be changed. */}
           <div className="section-h2">
             <span className="section-h2-tag" aria-hidden="true">H2</span>
-            <input type="text" value={heading} readOnly={written} maxLength={300} onChange={(e) => setHeading(e.target.value)} onBlur={() => void saveHeading()}
+            <input type="text" value={heading} readOnly={written || lockedOut} maxLength={300} onChange={(e) => setHeading(e.target.value)} onBlur={() => void saveHeading()}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
               placeholder="Section heading" aria-label="Section heading (H2)" />
           </div>
-          <RichEditor value={text} onChange={setText} readOnly={written} label="Section text" handleRef={editorRef}
+          <RichEditor value={text} onChange={setText} readOnly={written || lockedOut} label="Section text" handleRef={editorRef}
             placeholder="Write this section in your own words, from the talking points and sources." />
         </section>
-        <SourceLinks text={text} items={items} disabled={written} onChange={setText} />
+        <SourceLinks text={text} items={items} disabled={written || lockedOut} onChange={setText} />
 
         <ErrorText>{error}</ErrorText>
         {note && <p className="notice small">{note}</p>}

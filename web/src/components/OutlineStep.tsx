@@ -13,6 +13,8 @@ import { ChatPanel } from "./ChatPanel";
 import { normalise } from "../lib/recipes";
 import { asDepth, blankMainWithSubs, DEPTH_LABELS, groupEnd, moveGroup, moveSub, setLevel, type Draft } from "../lib/outlineRows";
 import { outlineView } from "../lib/stepViews";
+import { useEditLock } from "../lib/locks";
+import { LockBanner } from "./LockBanner";
 
 /** The piece's working title and primary keyword, editable on the outline. Each is saved when you leave its box. */
 function TitleFields({ piece, disabled, onSaved }: { piece: Piece; disabled: boolean; onSaved: () => void }) {
@@ -96,6 +98,12 @@ const savable = (list: Draft[]) => list.filter((s) => s.heading.trim()).map((s) 
 const outlineSig = (list: { heading: string; purpose: string; expectation_ids: string[]; structure?: Block[] | null; level?: number; depth?: string }[]) =>
   JSON.stringify(list.filter((s) => s.heading.trim()).map((s) => [s.heading.trim(), s.purpose.trim(), s.expectation_ids, cleanBlocks(s.structure ?? []), s.level ?? 2, s.depth ?? "standard"]));
 
+/** The saved outline as one comparable string, or null when it can't be read. */
+async function savedOutlineSig(pieceId: string): Promise<string | null> {
+  const { data, error } = await supabase.from("piece_sections").select("heading, purpose, expectation_ids, structure, level, depth").eq("piece_id", pieceId).order("position");
+  return error || !data ? null : outlineSig(data as Parameters<typeof outlineSig>[0]);
+}
+
 /** Analysis of the reviewed research, then the outline (writer-owned, AI-suggested). */
 export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; onAdvanced: () => void; onChanged: () => void }) {
   const { data, error, reload } = useLoad(async () => {
@@ -132,6 +140,14 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   // The outline as it was before "Fix now" changed it, so the change can be undone.
   const [undo, setUndo] = useState<Draft[] | null>(null);
   const confirmed = Boolean(piece.outline_confirmed_at);
+  // One person (or one Claude) at a time edits the outline. The lock is taken on the first edit.
+  const lock = useEditLock(piece.id, "outline", null, !confirmed);
+  // Someone saved a different outline while this tab was open: the writer chooses which one to keep.
+  const [conflict, setConflict] = useState(false);
+  const forceSave = useRef(false);
+  useEffect(() => {
+    if (data && draft && !confirmed && outlineSig(draft) !== outlineSig(data.sections)) void lock.ensure();
+  }, [draft]);
   const recipe = normalise(piece.recipe);
   const aiThread = recipe.outline.mode === "free" && recipe.outline.ai_thread;
 
@@ -162,10 +178,20 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   // The outline as it was when a save last failed: it isn't tried again until the writer changes something.
   const failedSig = useRef<string | null>(null);
   useEffect(() => {
-    if (!data || !draft || confirmed || saveState === "saving" || busy || blankMainWithSubs(draft)) return;
+    if (!data || !draft || confirmed || saveState === "saving" || busy || blankMainWithSubs(draft) || lock.other || conflict) return;
     const sig = outlineSig(draft);
+    // Nothing left to save: a "keep my version" choice is spent.
+    if (sig === outlineSig(data.sections)) forceSave.current = false;
     if (sig === outlineSig(data.sections) || sig === failedSig.current) return;
     const t = window.setTimeout(async () => {
+      // Someone else may have taken the outline since the last edit: then nothing is saved, and the banner says why.
+      if (!(await lock.ensure())) { forceSave.current = false; return; }
+      // Is what is saved still what this tab loaded? If not, someone saved in between and this tab must not overwrite it unasked.
+      if (!forceSave.current) {
+        const saved = await savedOutlineSig(piece.id);
+        if (saved !== null && saved !== outlineSig(data.sections)) { setConflict(true); return; }
+      }
+      forceSave.current = false;
       setSaveState("saving");
       try {
         const { error: err } = await supabase.rpc("save_outline", { target_piece: piece.id, sections: savable(draft) });
@@ -180,13 +206,15 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
       }
     }, 1200);
     return () => window.clearTimeout(t);
-  }, [draft, data, confirmed, saveState, busy]);
+  }, [draft, data, confirmed, saveState, busy, lock.other, conflict]);
 
   if (error) return <ErrorText>{error}</ErrorText>;
   if (!data || !draft) return <Loading />;
   const { contract, messages } = data;
   // Not saved yet (the editor saves by itself shortly after an edit).
   const dirty = outlineSig(draft) !== outlineSig(data.sections);
+  // Read-only while confirmed, and while someone else holds the edit lock.
+  const locked = confirmed || lock.other !== null;
   // Every section with a heading already has a content plan, so there is nothing for Plan section contents to do.
   const allPlanned = draft.filter((s) => s.heading.trim()).every((s) => s.structure.length > 0);
   const uncovered = contract.expectations.filter((e) => !draft.some((s) => s.expectation_ids.includes(e.id)));
@@ -204,6 +232,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   }
 
   async function save(list: Draft[] = draft!) {
+    if (!(await lock.ensure())) throw new Error("Someone else is editing the outline. Take over from the banner to save your changes.");
     if (blankMainWithSubs(list)) throw new Error("Give the main heading above the sub-headings a name first (or remove it).");
     // While this runs, the automatic save waits, so the two never write at once.
     setSaveState("saving");
@@ -464,10 +493,10 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                 });
               }}>Reopen outline</button>
             )}
-            {!confirmed && (saveState === "error" && dirty
+            {!locked && (saveState === "error" && dirty
               ? <span className="small" style={{ color: "var(--flag, #b3261e)" }}>Couldn't save. Your edits are kept here; change something to try again.</span>
               : (dirty || saveState === "saving") && <span className="small faint">Saving…</span>)}
-            {!confirmed && recipe.outline.mode !== "off" && draft.some((s) => s.heading.trim()) && (
+            {!locked && recipe.outline.mode !== "off" && draft.some((s) => s.heading.trim()) && (
               <AiAction<{ sections: { position: number; blocks: Block[] }[] }>
                 label="Plan section contents"
                 primary={false}
@@ -493,19 +522,31 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                 }}
               />
             )}
-            {!confirmed && recipe.outline.seo_geo_check && (
+            {!locked && recipe.outline.seo_geo_check && (
               <AiAction label="Run SEO & GEO Checks" primary={false} small reasonAsTitle disabled={dirty || saveState === "saving" || data.sections.length === 0}
                 reason="Saving…" payload={{ task: "seo_geo_check", piece_id: piece.id, scope: "outline" }} onDone={() => { setSeoOpen(true); onChanged(); }}
                 onBusyChange={(b) => setWorking(b ? "Running the search and answer-engine checks…" : null)} />
             )}
-            {!confirmed && aiThread && <button type="button" className="btn btn-small btn-primary" onClick={() => setChatOpen(true)}>Ask AI</button>}
+            {!locked && aiThread && <button type="button" className="btn btn-small btn-primary" onClick={() => setChatOpen(true)}>Ask AI</button>}
           </header>
           <div className="stack" style={{ padding: "18px 20px 22px" }}>
             {recipe.outline.mode === "fixed" && (
               <p className="small muted">This format starts from a fixed outline. Adjust the headings if this piece needs it.</p>
             )}
             {/* The working title and primary keyword, here so anything the SEO & GEO checks say about them can be fixed in place. */}
-            {(recipe.outline.seo_geo_check || piece.primary_keyword) && <TitleFields piece={piece} disabled={confirmed} onSaved={onChanged} />}
+            {(recipe.outline.seo_geo_check || piece.primary_keyword) && <TitleFields piece={piece} disabled={locked} onSaved={onChanged} />}
+            {lock.other && (
+              <LockBanner holder={lock.other} what="the outline" unsaved={dirty} problem={lock.problem} onTakeOver={() => void lock.takeOver()}
+                onDiscard={() => { resync.current = data; void reload(); }} />
+            )}
+            {conflict && (
+              <div className="notice row" role="alert" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                <span className="small"><strong>The outline changed while you were editing.</strong> Someone else saved a different version. Your edits are not saved yet.</span>
+                <span className="spacer" />
+                <button type="button" className="btn btn-small" onClick={() => { setConflict(false); resync.current = data; void reload(); }}>Use the saved version</button>
+                <button type="button" className="btn btn-quiet btn-small" onClick={() => { forceSave.current = true; setConflict(false); }}>Keep my version</button>
+              </div>
+            )}
             <p className="small muted">
               Each section says which contract expectations it is responsible for. Those are what it gets checked
               against after you write it.
@@ -529,9 +570,9 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                   <div className={`outline-card${sub ? " sub" : ""}`}>
                     <div className="section-head">
                       {sub && <span className="level-tag" title="Sub-heading (H3)">H3</span>}
-                      <input type="text" value={s.heading} disabled={confirmed} onChange={(e) => update(s.key, { heading: e.target.value })}
+                      <input type="text" value={s.heading} disabled={locked} onChange={(e) => update(s.key, { heading: e.target.value })}
                         placeholder={sub ? "Sub-heading" : "Section heading"} aria-label={`${sub ? "Sub-heading" : "Section"} ${i + 1} heading`} className="heading-input" />
-                      {!confirmed && (
+                      {!locked && (
                         <div className="row" style={{ gap: 2, flexWrap: "nowrap" }}>
                           <button type="button" className="btn btn-quiet btn-small" disabled={!canUp}
                             onClick={() => setDraft(sub ? moveSub(draft, i, -1) : moveGroup(draft, i, -1))} aria-label={sub ? "Move sub-heading up" : "Move section up"}>↑</button>
@@ -550,20 +591,20 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                     {sub && (
                       <label className="depth-pick small muted">
                         How much it should say
-                        <select value={s.depth} disabled={confirmed} onChange={(e) => update(s.key, { depth: asDepth(e.target.value) })}>
+                        <select value={s.depth} disabled={locked} onChange={(e) => update(s.key, { depth: asDepth(e.target.value) })}>
                           {(Object.keys(DEPTH_LABELS) as Draft["depth"][]).map((d) => <option key={d} value={d}>{DEPTH_LABELS[d]}</option>)}
                         </select>
                       </label>
                     )}
                     {/* A box that grows with its text, so a long purpose is never cut off. */}
-                    <textarea className="purpose-input" value={s.purpose} disabled={confirmed} rows={Math.max(1, Math.ceil(s.purpose.length / 100))}
+                    <textarea className="purpose-input" value={s.purpose} disabled={locked} rows={Math.max(1, Math.ceil(s.purpose.length / 100))}
                       onChange={(e) => update(s.key, { purpose: e.target.value })}
                       placeholder={sub ? "What this part tells the reader" : "What this section does for the reader"} aria-label={`${sub ? "Sub-heading" : "Section"} ${i + 1} purpose`} />
                     {/* A sub-heading owes no contract points: its main heading does. */}
                     {!sub && <div className="owed">
                       {contract.expectations.map((e, n) => (
                         <label key={e.id} className={`chip${s.expectation_ids.includes(e.id) ? " on" : ""}`} title={e.text}>
-                          <input type="checkbox" disabled={confirmed} checked={s.expectation_ids.includes(e.id)} onChange={(ev) => update(s.key, {
+                          <input type="checkbox" disabled={locked} checked={s.expectation_ids.includes(e.id)} onChange={(ev) => update(s.key, {
                             expectation_ids: ev.target.checked ? [...s.expectation_ids, e.id] : s.expectation_ids.filter((x) => x !== e.id),
                           })} />
                           Point {n + 1}
@@ -580,10 +621,10 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                             : "· none yet"}
                         </span>
                       </summary>
-                      <StructureEditor blocks={s.structure} disabled={confirmed} onChange={(structure) => update(s.key, { structure })} />
+                      <StructureEditor blocks={s.structure} disabled={locked} onChange={(structure) => update(s.key, { structure })} />
                     </details>
                     {/* A section made of parallel items (each tool, each step) gets a sub-heading for each, so each is researched and written on its own. */}
-                    {canNest && !sub && !confirmed && (
+                    {canNest && !sub && !locked && (
                       <div>
                         <button type="button" className="btn btn-quiet btn-small" onClick={() => {
                           const at = groupEnd(draft, i);
@@ -596,7 +637,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                 );
               })}
             </ol>
-            {!confirmed && (
+            {!locked && (
               <div>
                 <button type="button" className="btn btn-small" onClick={() => setDraft([...draft, { key: key(), level: 2, depth: "standard", heading: "", purpose: "", expectation_ids: [], structure: [] }])}>
                   Add section
@@ -630,7 +671,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
               </p>
             )}
             <ErrorText>{actionError}</ErrorText>
-            {!confirmed && (
+            {!locked && (
               <div className="row">
                 <button type="button" className="btn btn-primary" disabled={busy || draft.length === 0} onClick={() => act(async () => {
                   if (dirty) await save();
