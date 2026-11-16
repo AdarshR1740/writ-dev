@@ -149,7 +149,7 @@ declare
   lock_scope text;
   sid uuid := null;
   pid uuid;
-  both boolean := false;
+  also_outline boolean := false;
 begin
   -- Not a person's own request, or a cascade (deleting a piece deletes its sections): nothing to check.
   if request_role() <> 'authenticated' or pg_trigger_depth() > 1 then
@@ -170,14 +170,14 @@ begin
       lock_scope := 'section'; sid := old.id;
       -- A heading changed on its own is both: the section's own work (its H2 in the Writing step) and a change to the outline
       -- (a rename in the outline editor). Neither lock may be held by someone else.
-      both := new.heading is distinct from old.heading and new.content is not distinct from old.content
+      also_outline := new.heading is distinct from old.heading and new.content is not distinct from old.content
         and new.ai_draft is not distinct from old.ai_draft and new.brief is not distinct from old.brief and new.points is not distinct from old.points;
     else
       return new;
     end if;
   end if;
   perform assert_unlocked(pid, lock_scope, sid);
-  if both then perform assert_unlocked(pid, 'outline', null); end if;
+  if also_outline then perform assert_unlocked(pid, 'outline', null); end if;
   return case when tg_op = 'DELETE' then old else new end;
 end;
 $$;
