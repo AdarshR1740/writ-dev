@@ -4,11 +4,14 @@ Writ's method inside Claude. Claude reads a section's brief from Writ (talking p
 
 ## Tools
 
+The full, always-current reference (every tool, what it does, when it is used, its parameters) is [docs/TOOLS.md](docs/TOOLS.md), and the Writ app shows it on its **Writ in Claude** page. Both are generated: `npm run docs:update`. The table below is a summary.
+
 | Tool | What it does |
 |---|---|
 | `writ_list_pieces` | The writer's pieces: code, title, stage |
 | `writ_get_piece` | Brief, reader's question, outline with each section's id, status and whether it is prepared |
 | `writ_get_section` | Everything needed to write one section: purpose, outline, talking points with evidence, numbered approved research with URLs, planned structure, current text |
+| `writ_check_piece` | Read-only health check: what the writer will see on each step in Writ right now, and anything that looks wrong or stuck, each with what to do. Run it after saving an outline, reopening something, or finishing a step |
 | `writ_get_voice` | Core voice, format profile, audience, positioning, learned voice rules |
 | `writ_get_setup` | Where the writer stands: their companies, each with its formats, how much of the house file is filled in (and whether it is ready), and its piece count. An empty list means a brand-new writer |
 | `writ_create_company` | Creates the writer's company through Writ's `create_company` (they become its editor). A company can't be deleted from here, so the name is confirmed first |

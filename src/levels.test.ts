@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getPiece, getSection, saveOutline, saveSectionDraft, WritError } from "./writ.js";
+import { checkPiece, getPiece, getSection, saveOutline, saveSectionDraft, WritError } from "./writ.js";
 
 const PIECE = "22222222-2222-4222-8222-222222222222";
 const S1 = "11111111-1111-4111-8111-111111111111";
@@ -167,5 +167,96 @@ describe("saveOutline for an older caller that sends an outline with sub-heading
     expect(sent).toHaveLength(15);
     expect(sent[0].expectation_ids).toEqual(["e1"]);
     expect(sent.slice(1).every((s) => s.expectation_ids.length === 0 && s.level === undefined)).toBe(true);
+  });
+});
+
+describe("saveOutline keeps what a kept section covers when covers is left out", () => {
+  const ID1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+  const ID2 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
+  const existing = [{ id: ID1, structure: null, level: 2, expectation_ids: ["e1"] }, { id: ID2, structure: null, level: 2, expectation_ids: ["e2"] }];
+  it("sends the same points back, and counts them as covered", async () => {
+    const { db, rpcs } = outlineDb(existing);
+    const r = await saveOutline(db, "SI-0001", [{ id: ID1, heading: "One" }, { id: ID2, heading: "Two" }]);
+    expect((rpcs[0].args.sections as { expectation_ids: string[] }[]).map((s) => s.expectation_ids)).toEqual([["e1"], ["e2"]]);
+    expect(r.scope_points_not_covered).toEqual([]);
+  });
+  it("clears them only when covers is sent, even empty", async () => {
+    const { db, rpcs } = outlineDb(existing);
+    const r = await saveOutline(db, "SI-0001", [{ id: ID1, heading: "One", covers: [] }, { id: ID2, heading: "Two", covers: [1] }]);
+    expect((rpcs[0].args.sections as { expectation_ids: string[] }[]).map((s) => s.expectation_ids)).toEqual([[], ["e1"]]);
+    expect(r.scope_points_not_covered).toEqual([{ n: 2, text: "Second" }]);
+  });
+  it("does not carry points onto a new section, and a new one with no covers covers nothing", async () => {
+    const { db, rpcs } = outlineDb(existing);
+    await saveOutline(db, "SI-0001", [{ id: ID1, heading: "One" }, { heading: "Brand new" }]);
+    expect((rpcs[0].args.sections as { expectation_ids: string[] }[]).map((s) => s.expectation_ids)).toEqual([["e1"], []]);
+  });
+});
+
+/** A stand-in for checkPiece: the piece, its scope, its research and its sections. `old` has no level or depth column. */
+function checkDb(opts: { piece?: Record<string, unknown>; sections?: Record<string, unknown>[]; analysis?: unknown; old?: boolean; fail?: string } = {}) {
+  const sections = (opts.sections ?? [
+    { position: 1, heading: "A", status: "writing", content: "one two three", points: { points: [{}] }, brief: null, ai_draft: "x", level: 2 },
+    { position: 2, heading: "B", status: "writing", content: "four five", points: { points: [{}] }, brief: null, ai_draft: "x", level: 2 },
+  ]).map((s) => (opts.old ? Object.fromEntries(Object.entries(s).filter(([k]) => k !== "level" && k !== "depth")) : s));
+  const tables: Record<string, unknown> = {
+    pieces: { id: PIECE, code: "SI-0001", title: "T", stage: "outline", company_id: "c", format_id: null, outline_confirmed_at: null, signed_off_at: null,
+      analysis: opts.analysis ?? null, recipe: { analysis: { enabled: true }, outline: { mode: "free" }, contract: { mode: "full" }, writing: { ai_draft: true } }, ...opts.piece },
+    piece_contracts: { expectations: [{ id: "e1" }, { id: "e2" }], confirmed_at: "2026-11-10" },
+  };
+  return {
+    from(table: string) {
+      let cols = "";
+      const q: Record<string | symbol, unknown> = new Proxy({}, {
+        get(_t, prop) {
+          if (prop === "select") return (c: string) => { cols = c; return q; };
+          if (prop === "maybeSingle") return async () => (table === opts.fail ? { data: null, error: { message: "boom" } } : { data: tables[table] ?? null, error: null });
+          if (prop === "then") {
+            return (resolve: (v: unknown) => void) => {
+              if (table === opts.fail) return resolve({ data: null, error: { message: "boom" } });
+              if (table === "piece_sections" && opts.old && /\b(level|depth)\b/.test(cols)) return resolve({ data: null, error: { message: "column piece_sections.level does not exist" } });
+              if (table === "piece_sections") return resolve({ data: sections, error: null });
+              if (table === "research_items") return resolve({ data: [{ status: "approved" }, { status: "approved" }, { status: "unreviewed" }], error: null });
+              return resolve({ data: [], error: null });
+            };
+          }
+          return () => q;
+        },
+      });
+      return q;
+    },
+  } as unknown as SupabaseClient;
+}
+
+describe("checkPiece", () => {
+  it("reports a read that failed instead of describing an empty piece", async () => {
+    await expect(checkPiece(checkDb({ fail: "research_items" }), "SI-0001")).rejects.toThrow(/Could not read the research: boom/);
+    await expect(checkPiece(checkDb({ fail: "piece_contracts" }), "SI-0001")).rejects.toThrow(/Could not read the scope/);
+  });
+  it("describes what the writer sees for a piece made here (no gap analysis, outline saved) and finds it healthy", async () => {
+    const r = await checkPiece(checkDb(), "SI-0001");
+    expect(r.healthy).toBe(true);
+    expect(r.what_the_writer_sees.outline).toMatch(/outline editor with 2 sections, open for editing/);
+    expect(r.what_the_writer_sees.research).toMatch(/locked: 2 approved/);
+    expect(r.concerns.map((c) => c.id)).toEqual(["benchmark-not-run"]);
+    expect(r.how_to_use).toMatch(/Tell the writer about every concern marked problem/);
+  });
+  it("reports a problem when writing has started without a confirmed outline", async () => {
+    const r = await checkPiece(checkDb({ piece: { stage: "writing" } }), "SI-0001");
+    expect(r.healthy).toBe(false);
+    expect(r.concerns.map((c) => c.id)).toContain("writing-without-confirmed-outline");
+  });
+  it("sees sub-headings, and works on a database that has no level column", async () => {
+    const withSub = await checkPiece(checkDb({ sections: [
+      { position: 1, heading: "A", status: "writing", content: "x", points: { points: [{}] }, level: 2 },
+      { position: 2, heading: "a1", status: "writing", content: "", points: { points: [{}] }, level: 3 },
+    ] }), "SI-0001");
+    expect(withSub.what_the_writer_sees.outline).toMatch(/1 section and 1 sub-heading/);
+    const old = await checkPiece(checkDb({ old: true }), "SI-0001");
+    expect(old.what_the_writer_sees.outline).toMatch(/2 sections/);
+  });
+  it("treats a piece with a saved analysis as having had its benchmark run", async () => {
+    const r = await checkPiece(checkDb({ analysis: { alignment: { verdict: "aligned", summary: "" }, benchmark_done: true } }), "SI-0001");
+    expect(r.concerns.map((c) => c.id)).not.toContain("benchmark-not-run");
   });
 });

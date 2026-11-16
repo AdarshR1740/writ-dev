@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { signedInClient } from "./client.js";
 import { DRAFT_RULES, NEW_PIECE_FINISH, NEW_PIECE_RULES, ONBOARDING } from "./prompts.js";
 import {
-  WritError, addExpertAnswer, addFormats, addResearch, applyAlignmentFixes, completeResearch, confirmOutline, confirmScope, createCompany,
+  WritError, addExpertAnswer, checkPiece, addFormats, addResearch, applyAlignmentFixes, completeResearch, confirmOutline, confirmScope, createCompany,
   getContextDocuments, getPiece, getResearch, getReviewInput, getSection, getSetup, getVoice, listPieces, markFindings, reviewResearch,
   saveAnalysis, saveContextDocument, saveFinalChecks, saveOutline, saveOutlineChecks, saveScope, saveSectionChecks, saveSectionDraft,
   saveSectionPoints, startPiece, useResearch,
@@ -28,7 +28,7 @@ async function run(fn: (c: SupabaseClient) => Promise<unknown>): Promise<Result>
   try { return ok(await fn(await db())); } catch (e) { return fail(e); }
 }
 
-const server = new McpServer({ name: "writ", version: "0.1.0" });
+const server = new McpServer({ name: "writ", version: "0.2.0" });
 
 /** Tools that change something in Writ take this: a prompt for the model to set it only after the writer's yes. */
 const approved = (what: string) => z.literal(true).describe(`Must be true, and only after the writer has said yes to ${what} in this conversation`);
@@ -53,6 +53,13 @@ server.registerTool("writ_get_section", {
   inputSchema: { section_id: z.string().describe("The section id") },
   annotations: { readOnlyHint: true },
 }, ({ section_id }) => run((c) => getSection(c, section_id)));
+
+server.registerTool("writ_check_piece", {
+  title: "Check what the writer will see",
+  description: "A read-only health check of a piece. It says, step by step, what the writer will see in Writ right now (scope, research, outline, writing, sign-off), and lists anything that looks wrong or stuck, each with what to do. Run it after saving an outline, reopening something, or finishing a step, and tell the writer about every problem it reports.",
+  inputSchema: { piece: z.string().describe("The piece code (SI-0012) or id") },
+  annotations: { readOnlyHint: true },
+}, ({ piece }) => run((c) => checkPiece(c, piece)));
 
 server.registerTool("writ_get_voice", {
   title: "Get the company's voice",
@@ -212,7 +219,7 @@ server.registerTool("writ_save_outline", {
     sections: z.array(z.object({
       heading: z.string().describe("A specific heading, never Introduction, Overview or Conclusion"),
       purpose: z.string().optional().describe("One line: what this section tells the reader"),
-      covers: z.array(z.number().int()).optional().describe("Numbers of the scope points (1, 2, ...) this section serves"),
+      covers: z.array(z.number().int()).optional().describe("Numbers of the scope points (1, 2, ...) this section serves. Omit it on a section you keep (id) to leave what it covers as it is; send [] to clear it"),
       id: z.string().optional().describe("The section id, when keeping an existing section"),
       level: z.number().int().min(2).max(3).optional().describe("2 for a main heading (H2), 3 for a sub-heading (H3) under the main heading above it. Omit to keep a section's level (a new one is a main heading). Sub-headings are only for formats with a free outline, and a sub-heading has no scope points"),
       depth: z.enum(["short", "standard", "deep"]).optional().describe("How much a sub-heading should say. Omit to keep it"),

@@ -84,6 +84,9 @@ HOW TO RUN IT
 - For a short format (a post, a caption, a short script), the scope has one or two points and the outline is one or a few sections. Propose the scope and the outline together in one message and ask once, but save and confirm the scope before the outline.
 - Check what the format has already settled. writ_start_piece and writ_get_piece return a "workflow": the size of the scope (full, lite, or off), whether the outline is fixed (its sections already exist) or free, whether web research is on, and what the brief asks for. If a step is already done or switched off by the format, say so in one line and move on. You suggest, they decide. Work in small steps, ask for feedback at each one, and never move on without a clear yes.
 
+CHECK YOUR WORK
+- After you save or confirm an outline, reopen or finish anything, or save the sections' points, call writ_check_piece for the piece. It says what the writer will see in Writ on each step and lists anything that looks wrong. If it reports a problem, tell the writer in plain words and what you did about it; never leave one unmentioned, and never change the writer's text to make a check pass. A note is worth passing on only when it helps.
+
 STEP 1. THE BRIEF
 - Call writ_get_setup to see their company (or companies), its formats, and whether the house file is ready. If house_file_ready is false, tell the writer that drafts will come out generic until the company's ICP, core voice and positioning are set up, and offer to run /writ:onboarding first; if they want to carry on anyway, do.
 - You need: a title, the topic (what the piece is about), and ideally the primary keyword, the goal, who it is for, and the format. Ask only for what is missing, one or two questions at a time, in plain words. If they gave an idea with the command, start from it.

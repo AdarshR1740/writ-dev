@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FORMAT_PRESETS } from "./format-presets.js";
+import { describePiece, type PieceFacts } from "./step-views.js";
 
 /**
  * Everything the MCP tools do against Writ, as plain functions over a signed-in Supabase client. The client carries the
@@ -588,9 +589,10 @@ export async function saveOutline(db: SupabaseClient, ref: string, sections: { h
   if (contract.error) throw new WritError(`Could not read the scope: ${contract.error.message}`);
   const exp = ((contract.data as { expectations?: { id: string; text: string }[] } | null)?.expectations) ?? [];
   // Writ's save_outline clears a kept section's planned structure unless it is sent back, so send back what is there.
-  const existing = must(await sectionRows(db, piece.id, "id, structure") as { data: unknown; error: { message: string } | null }, "Could not read the outline") as unknown as
-    { id: string; structure: unknown; level?: number }[];
+  const existing = must(await sectionRows(db, piece.id, "id, structure, expectation_ids") as { data: unknown; error: { message: string } | null }, "Could not read the outline") as unknown as
+    { id: string; structure: unknown; level?: number; expectation_ids?: string[] }[];
   const structureOf = new Map(existing.map((e) => [e.id, e.structure]));
+  const coversOf = new Map(existing.map((e) => [e.id, e.expectation_ids ?? []]));
   const levelOf = new Map(existing.map((e) => [e.id, e.level === 3 ? 3 : 2]));
   // Sub-headings (level 3) count too, so a section with several leaves room: up to 40 rows in all. An outline that already has
   // sub-headings keeps that room when an older caller sends it back without levels.
@@ -604,7 +606,10 @@ export async function saveOutline(db: SupabaseClient, ref: string, sections: { h
     // A sub-heading owes no scope points: its main heading does. A section sent without a level is the level it has now.
     const keepId = s.id && UUID.test(s.id.trim()) ? s.id.trim() : undefined;
     const effective = s.level ?? (keepId ? levelOf.get(keepId) : undefined) ?? 2;
-    const ids = (exp.length && effective !== 3 ? (s.covers ?? []) : []).map((n) => {
+    // "covers" left out on a section that is kept means: leave what it covers as it is. Send [] to clear it.
+    const kept = keepId && s.covers === undefined && effective !== 3 ? (coversOf.get(keepId) ?? []).filter((id) => exp.some((e) => e.id === id)) : undefined;
+    if (kept) for (const id of kept) covered.add(exp.findIndex((e) => e.id === id) + 1);
+    const ids = kept ?? (exp.length && effective !== 3 ? (s.covers ?? []) : []).map((n) => {
       if (!Number.isInteger(n) || n < 1 || n > exp.length) throw new WritError(`"covers" must use scope point numbers 1 to ${exp.length}.`);
       covered.add(n);
       return exp[n - 1].id;
@@ -633,6 +638,61 @@ export async function saveOutline(db: SupabaseClient, ref: string, sections: { h
   return {
     saved: true, code: piece.code, sections: saved, scope_points_not_covered: uncovered, confirmed: false,
     ...(changed ? { differs_from_fixed_outline: true, fixed_outline: fixed, note: "This format has a fixed outline, and these sections differ from it. Check that the writer wants that." } : {}),
+  };
+}
+
+/**
+ * What the writer will see on each step of this piece right now, and anything that looks wrong. It uses the same rules the
+ * app's screens use (step-views.ts is generated from the app), so a piece made here shows what it should in the app.
+ * Read-only. Run it after saving an outline, reopening something, or finishing a step.
+ */
+export async function checkPiece(db: SupabaseClient, ref: string) {
+  const piece = await findPiece(db, ref);
+  const [extra, contract, items, rows] = await Promise.all([
+    db.from("pieces").select("analysis, signed_off_at").eq("id", piece.id).maybeSingle(),
+    db.from("piece_contracts").select("expectations, confirmed_at").eq("piece_id", piece.id).maybeSingle(),
+    db.from("research_items").select("status").eq("piece_id", piece.id).eq("scope", "piece"),
+    sectionRows(db, piece.id, "position, heading, status, content, points, brief, ai_draft"),
+  ]);
+  // A read that failed must not look like an empty piece: it would produce concerns that are not true.
+  for (const [what, res] of [["the piece", extra], ["the scope", contract], ["the research", items]] as const) {
+    if (res.error) throw new WritError(`Could not read ${what}: ${res.error.message}`);
+  }
+  const more = (extra.data ?? {}) as { analysis?: Record<string, unknown> | null; signed_off_at?: string | null };
+  const sections = must(rows as { data: unknown; error: { message: string } | null }, "Could not read the sections") as unknown as
+    { position: number; level?: number; heading: string; status: string; content: string; points: { points?: unknown[] } | null; brief: unknown[] | null; ai_draft: string | null }[];
+  const r = (piece.recipe ?? {}) as Recipe;
+  const counts = ((items.data ?? []) as { status: string }[]).reduce((n, i) => ({ ...n, [i.status]: (n[i.status] ?? 0) + 1 }), {} as Record<string, number>);
+  const c = contract.data as { expectations?: unknown[]; confirmed_at?: string | null } | null;
+  const analysis = more.analysis && typeof more.analysis === "object" ? more.analysis : null;
+  const facts: PieceFacts = {
+    stage: piece.stage as PieceFacts["stage"],
+    outlineConfirmed: Boolean(piece.outline_confirmed_at),
+    signedOff: Boolean(more.signed_off_at),
+    recipe: {
+      // As in the app, a recipe with no base is the long-form one: the benchmark is on unless it says otherwise.
+      analysisEnabled: r.analysis?.enabled !== false,
+      outlineMode: (r.outline?.mode ?? "free") as PieceFacts["recipe"]["outlineMode"],
+      contractMode: (r.contract?.mode ?? "full") as PieceFacts["recipe"]["contractMode"],
+      researchEnabled: (r.research as { enabled?: boolean } | undefined)?.enabled !== false,
+      aiDrafts: r.writing?.ai_draft !== false,
+    },
+    analysis: { exists: Boolean(analysis && Object.keys(analysis).some((k) => k !== "benchmark_done")), benchmarkDone: analysis?.benchmark_done === true },
+    contract: c ? { confirmed: Boolean(c.confirmed_at), points: (c.expectations ?? []).length } : null,
+    research: { approved: counts.approved ?? 0, unreviewed: counts.unreviewed ?? 0 },
+    sections: sections.map((s) => ({
+      position: s.position, level: s.level === 3 ? 3 : 2, heading: s.heading, status: s.status, words: words(s.content ?? ""),
+      hasPoints: Boolean(s.points?.points?.length), hasBrief: Boolean(s.brief?.length), hasAiDraft: Boolean(s.ai_draft),
+    })),
+  };
+  const d = describePiece(facts);
+  return {
+    code: piece.code,
+    stage: piece.stage,
+    what_the_writer_sees: d.sees,
+    concerns: d.concerns,
+    healthy: !d.concerns.some((x) => x.severity === "problem"),
+    how_to_use: "Compare what_the_writer_sees with what you expect for this piece. Tell the writer about every concern marked problem, in plain words, and what you did or what they should do. Fix what your own tools can fix (a concern's suggestion says which). Never change the writer's text to make a check pass, and never hide a problem. A note is only worth mentioning when it helps the writer.",
   };
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "writ-mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Writ's method for briefs, sections and drafting, as an MCP server for Claude.",
   "type": "module",
   "bin": {
@@ -9,8 +9,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "pretest": "npm run build",
     "test": "vitest run",
-    "contract:update": "npm run build && node scripts/dump-contract.mjs > contract/mcp-contract.json"
+    "contract:update": "npm run build && node scripts/dump-contract.mjs > contract/mcp-contract.json",
+    "docs:update": "npm run build && node scripts/export-tool-docs.mjs"
   },
   "engines": {
     "node": ">=20"

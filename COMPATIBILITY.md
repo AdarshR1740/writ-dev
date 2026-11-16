@@ -55,5 +55,35 @@ It also reads and writes these tables directly, so their columns and row-level s
 ## Before every release
 
 1. `npm run build && npm test` (the contract test is part of it).
-2. If the Writ app's presets changed, regenerate `src/format-presets.ts` (see the README).
+2. If the Writ app's presets changed, regenerate `src/format-presets.ts` (see the README). If `web/src/lib/stepViews.ts` changed, regenerate `src/step-views.ts` (section 4).
 3. Bump `version` in `package.json` and in `src/index.ts`; refresh the snapshot as above.
+4. Add an entry for every new tool or prompt in `src/tool-docs.ts` (the tests fail without one), then run `npm run docs:update`. It rewrites `docs/TOOLS.md` and the data behind the "Writ in Claude" page in the app; commit both repos.
+
+## 4. State the app sets by itself
+
+The app's screens change things in the database directly from the browser, outside the database functions this server calls. Anything in this list is state the MCP server does not get for free. **When a change adds a browser-side write, ask: does the MCP server need to do the same? Add the answer here.**
+
+| What the app writes | From | The MCP server |
+|---|---|---|
+| `pieces.analysis.benchmark_done` (the benchmark was finished) | "Create outline" | Sets it on save when a gap analysis exists. **The screens no longer depend on it**: an outline that exists is always shown (`outlineView`). |
+| `pieces.analysis` flags: ignored, resolved, researched, sectioned, fixes_applied, verify_note | The benchmark panel | `writ_mark_findings`, `writ_apply_alignment_fixes`, `writ_add_expert_answer` |
+| `pieces.title`, `primary_keyword` | The outline's title fields | Plain data; `writ_start_piece` sets them at creation |
+| `piece_contracts` (core question, points) | The scope editor and the benchmark's scope modals | `writ_save_scope`, `writ_confirm_scope` |
+| `research_items` insert (a card or manual finding) | The research step | `writ_add_research`, `writ_add_expert_answer` |
+| `piece_sections.content`, `heading` | The Writing step | `writ_save_section_draft` (never overwrites the writer's text); headings through `writ_save_outline` |
+| `piece_sections.status` back to `writing` on reopening a written section | The Writing step | Not offered: the writer reopens in Writ |
+| Checks (`seo_geo_outline`, `seo_geo_final`, section checks) | The check panels | `writ_save_outline_checks`, `writ_save_section_checks`, `writ_save_final_checks`, in the app's own shapes |
+
+### The rule for screens
+
+A screen shows or hides something only as a function of the data underneath, never of a flag the app sets as a side effect of its own buttons. A piece with the data but without the flag must still show the data. The rules live in `web/src/lib/stepViews.ts` in the app (`outlineView`, `writingState`, `researchLocked`, `describePiece`) and are tested there against pieces built the way this server builds them.
+
+### The health check
+
+`writ_check_piece` describes what the writer will see on each step and lists what looks wrong. It runs those same rules: `src/step-views.ts` is **generated** from the app's `stepViews.ts`:
+
+```bash
+node scripts/export-step-views.mjs D:/projects/writ-dev
+```
+
+Run it again whenever `stepViews.ts` changes in the app, and commit the result. The `new_piece` prompt tells Claude to call the check after changing the outline or finishing a step, and to tell the writer about every problem it reports.

@@ -17,7 +17,7 @@ describe("MCP server over stdio", () => {
     const client = await connect();
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(tools).toEqual([
-      "writ_add_expert_answer", "writ_add_formats", "writ_add_research", "writ_apply_alignment_fixes", "writ_complete_research", "writ_confirm_outline",
+      "writ_add_expert_answer", "writ_add_formats", "writ_add_research", "writ_apply_alignment_fixes", "writ_check_piece", "writ_complete_research", "writ_confirm_outline",
       "writ_confirm_scope", "writ_create_company", "writ_get_check_input", "writ_get_context_documents", "writ_get_piece", "writ_get_research",
       "writ_get_section", "writ_get_setup", "writ_get_voice", "writ_list_pieces", "writ_mark_findings", "writ_review_research", "writ_save_analysis",
       "writ_save_context_document", "writ_save_final_checks", "writ_save_outline", "writ_save_outline_checks", "writ_save_scope",

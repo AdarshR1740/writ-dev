@@ -243,6 +243,23 @@
       }
     },
     {
+      "name": "writ_check_piece",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "piece"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "writ_complete_research",
       "readOnly": false,
       "input": {
@@ -857,17 +874,26 @@
             "type": "string"
           },
           "sections": {
-            "description": "1 to 12 sections, usually 4 to 8",
+            "description": "1 to 12 sections, usually 4 to 8 (up to 40 rows when sub-headings are included)",
             "items": {
               "properties": {
                 "covers": {
-                  "description": "Numbers of the scope points (1, 2, ...) this section serves",
+                  "description": "Numbers of the scope points (1, 2, ...) this section serves. Omit it on a section you keep (id) to leave what it covers as it is; send [] to clear it",
                   "items": {
                     "maximum": 9007199254740991,
                     "minimum": -9007199254740991,
                     "type": "integer"
                   },
                   "type": "array"
+                },
+                "depth": {
+                  "description": "How much a sub-heading should say. Omit to keep it",
+                  "enum": [
+                    "short",
+                    "standard",
+                    "deep"
+                  ],
+                  "type": "string"
                 },
                 "heading": {
                   "description": "A specific heading, never Introduction, Overview or Conclusion",
@@ -876,6 +902,12 @@
                 "id": {
                   "description": "The section id, when keeping an existing section",
                   "type": "string"
+                },
+                "level": {
+                  "description": "2 for a main heading (H2), 3 for a sub-heading (H3) under the main heading above it. Omit to keep a section's level (a new one is a main heading). Sub-headings are only for formats with a free outline, and a sub-heading has no scope points",
+                  "maximum": 3,
+                  "minimum": 2,
+                  "type": "integer"
                 },
                 "purpose": {
                   "description": "One line: what this section tells the reader",
