@@ -62,7 +62,7 @@ Settings, the same project and login as the Writ web app (the anon key is in the
 **Claude Code**
 
 ```bash
-claude mcp add writ -e WRIT_SUPABASE_URL=... -e WRIT_SUPABASE_ANON_KEY=... -e WRIT_EMAIL=... -e WRIT_PASSWORD=... -- node D:/projects/writ-dev/mcp-server/dist/index.js
+claude mcp add-json writ --scope user '{"command":"node","args":["D:/projects/writ-dev/mcp-server/dist/index.js"],"env":{"WRIT_SUPABASE_URL":"...","WRIT_SUPABASE_ANON_KEY":"...","WRIT_EMAIL":"...","WRIT_PASSWORD":"..."}}'
 ```
 
 **Claude Desktop** (`claude_desktop_config.json`)
