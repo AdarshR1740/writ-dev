@@ -1,8 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { CLIENT_ID } from "./clientId";
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+/** Set by /config.js on a hosted server; empty in development, where the values come from the build environment. */
+const runtime = (typeof window !== "undefined" ? (window as { __WRIT_CONFIG__?: { supabaseUrl?: string; supabaseAnonKey?: string } }).__WRIT_CONFIG__ : undefined) ?? {};
+const url = runtime.supabaseUrl || (import.meta.env.VITE_SUPABASE_URL as string | undefined);
+const anonKey = runtime.supabaseAnonKey || (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined);
 
 export const configured = Boolean(url && anonKey);
 
