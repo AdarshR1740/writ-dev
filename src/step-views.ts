@@ -61,6 +61,8 @@ export interface PieceFacts {
   contract: { confirmed: boolean; points: number } | null;
   research: { approved: number; unreviewed: number };
   sections: SectionFacts[];
+  /** Edit locks that are live right now (someone is editing the outline, or a section). */
+  locks?: { scope: "outline" | "section"; /** The section's heading, for a section lock. */ section?: string; holder: string; kind: "person" | "ai"; since: string }[];
 }
 
 export interface Concern {
@@ -148,6 +150,16 @@ export function describePiece(f: PieceFacts): PieceDescription {
   }
   if (f.stage === "writing" && hasOutline && f.sections.every((s) => s.status === "written")) {
     add({ id: "ready-to-sign-off", severity: "note", step: "signoff", message: "Every section is written. The piece is ready to sign off.", suggestion: "Review the draft in Writ and sign off." });
+  }
+  for (const l of f.locks ?? []) {
+    const what = l.scope === "outline" ? "the outline" : `the section "${l.section ?? "a section"}"`;
+    add({
+      id: l.scope === "outline" ? "locked-outline" : `locked-section-${l.section ?? ""}`,
+      severity: "note",
+      step: l.scope === "outline" ? "outline" : "writing",
+      message: `${l.holder} is editing ${what} in Writ (since ${l.since}).`,
+      suggestion: "Saves to it are refused until they finish or someone takes over. Do not retry in a loop: tell the writer, or work on something else.",
+    });
   }
   if (f.recipe.analysisEnabled && hasOutline && !f.analysis.exists && f.stage === "outline") {
     add({ id: "benchmark-not-run", severity: "note", step: "outline", message: "The outline exists but the benchmark of the scope and research was never run. The writer will see the outline, with a button to run the benchmark.", suggestion: "Optional: run the gap analysis and save it with writ_save_analysis." });

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FORMAT_PRESETS } from "./format-presets.js";
 import { describePiece, type PieceFacts } from "./step-views.js";
+import { CLIENT_ID } from "./client-id.js";
 
 /**
  * Everything the MCP tools do against Writ, as plain functions over a signed-in Supabase client. The client carries the
@@ -641,6 +642,55 @@ export async function saveOutline(db: SupabaseClient, ref: string, sections: { h
   };
 }
 
+// ---------------------------------------------------------------------------
+// Edit locks: one person or one Claude at a time on the outline, and on each section's text
+// ---------------------------------------------------------------------------
+
+type LockScope = "outline" | "section";
+type LockResult = { ok: true; token?: string } | { ok: false; holder_label: string; holder_kind: string; since: string; expires_at: string };
+
+/** The message Claude gets when the writer (or another Claude) holds the lock. It says what happened and what to do. */
+export function lockedMessage(r: { holder_label: string; since: string }, scope: LockScope): string {
+  const t = new Date(r.since);
+  const at = Number.isNaN(t.getTime()) ? "" : ` (since ${t.toISOString().slice(11, 16)} UTC)`;
+  return `${r.holder_label} is editing the ${scope === "outline" ? "outline" : "section"} in Writ${at}. Nothing was saved. Tell the writer, and ask them to finish or to take over from the banner in Writ; then try again. Do not retry in a loop.`;
+}
+
+const lockFunctionsMissing = (e: { code?: string; message?: string }) =>
+  e.code === "PGRST202" || e.code === "42883" || /acquire_lock/.test(e.message ?? "");
+
+/**
+ * Runs a write while holding the lock on the outline or a section, and lets go afterwards. If someone else holds it, nothing is
+ * written and Claude is told who and what to do. A Writ database without the lock functions behaves as before.
+ */
+export async function withLock<T>(db: SupabaseClient, pieceId: string, scope: LockScope, sectionId: string | null, fn: () => Promise<T>): Promise<T> {
+  const args = { target_piece: pieceId, lock_scope: scope, target_section: sectionId, client: CLIENT_ID };
+  const r = await db.rpc("acquire_lock", { ...args, kind: "ai", take_over: false, lease_seconds: 60 });
+  if (r.error) {
+    if (lockFunctionsMissing(r.error)) return fn();
+    throw new WritError(`Could not check the edit lock: ${r.error.message}`);
+  }
+  const res = r.data as LockResult;
+  if (res && res.ok === false) throw new WritError(lockedMessage(res, scope));
+  try {
+    return await fn();
+  } finally {
+    // Let go straight away: the lock only has to cover the write itself.
+    await Promise.resolve(db.rpc("release_lock", { ...args, lock_token: (res as { token?: string }).token ?? null })).catch(() => undefined);
+  }
+}
+
+export async function lockedOutline<T>(db: SupabaseClient, ref: string, fn: () => Promise<T>): Promise<T> {
+  const piece = await findPiece(db, ref);
+  return withLock(db, piece.id, "outline", null, fn);
+}
+
+export async function lockedSection<T>(db: SupabaseClient, sectionId: string, fn: () => Promise<T>): Promise<T> {
+  if (!UUID.test(sectionId.trim())) throw new WritError("section_id must be the id shown by writ_get_piece.");
+  const s = must(await db.from("piece_sections").select("piece_id").eq("id", sectionId.trim()).maybeSingle(), "Section") as { piece_id: string };
+  return withLock(db, s.piece_id, "section", sectionId.trim(), fn);
+}
+
 /**
  * What the writer will see on each step of this piece right now, and anything that looks wrong. It uses the same rules the
  * app's screens use (step-views.ts is generated from the app), so a piece made here shows what it should in the app.
@@ -648,11 +698,13 @@ export async function saveOutline(db: SupabaseClient, ref: string, sections: { h
  */
 export async function checkPiece(db: SupabaseClient, ref: string) {
   const piece = await findPiece(db, ref);
-  const [extra, contract, items, rows] = await Promise.all([
+  const [extra, contract, items, rows, held] = await Promise.all([
     db.from("pieces").select("analysis, signed_off_at").eq("id", piece.id).maybeSingle(),
     db.from("piece_contracts").select("expectations, confirmed_at").eq("piece_id", piece.id).maybeSingle(),
     db.from("research_items").select("status").eq("piece_id", piece.id).eq("scope", "piece"),
-    sectionRows(db, piece.id, "position, heading, status, content, points, brief, ai_draft"),
+    sectionRows(db, piece.id, "id, position, heading, status, content, points, brief, ai_draft"),
+    // Who is editing right now. A database without locks has no such table: then nobody is.
+    db.from("edit_locks").select("scope, section_id, holder_client, holder_label, holder_kind, acquired_at").eq("piece_id", piece.id).gt("expires_at", new Date().toISOString()),
   ]);
   // A read that failed must not look like an empty piece: it would produce concerns that are not true.
   for (const [what, res] of [["the piece", extra], ["the scope", contract], ["the research", items]] as const) {
@@ -680,6 +732,13 @@ export async function checkPiece(db: SupabaseClient, ref: string) {
     analysis: { exists: Boolean(analysis && Object.keys(analysis).some((k) => k !== "benchmark_done")), benchmarkDone: analysis?.benchmark_done === true },
     contract: c ? { confirmed: Boolean(c.confirmed_at), points: (c.expectations ?? []).length } : null,
     research: { approved: counts.approved ?? 0, unreviewed: counts.unreviewed ?? 0 },
+    locks: ((held.error ? [] : held.data ?? []) as { scope: "outline" | "section"; section_id: string; holder_client: string; holder_label: string; holder_kind: "person" | "ai"; acquired_at: string }[])
+      // This connection's own lock is not news.
+      .filter((l) => l.holder_client !== CLIENT_ID)
+      .map((l) => ({
+        scope: l.scope, holder: l.holder_label, kind: l.holder_kind, since: `${new Date(l.acquired_at).toISOString().slice(11, 16)} UTC`,
+        ...(l.scope === "section" ? { section: (sections as unknown as { id?: string; heading: string }[]).find((s) => s.id === l.section_id)?.heading } : {}),
+      })),
     sections: sections.map((s) => ({
       position: s.position, level: s.level === 3 ? 3 : 2, heading: s.heading, status: s.status, words: words(s.content ?? ""),
       hasPoints: Boolean(s.points?.points?.length), hasBrief: Boolean(s.brief?.length), hasAiDraft: Boolean(s.ai_draft),

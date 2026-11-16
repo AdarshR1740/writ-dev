@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { signedInClient } from "./client.js";
 import { DRAFT_RULES, NEW_PIECE_FINISH, NEW_PIECE_RULES, ONBOARDING } from "./prompts.js";
 import {
-  WritError, addExpertAnswer, checkPiece, addFormats, addResearch, applyAlignmentFixes, completeResearch, confirmOutline, confirmScope, createCompany,
+  WritError, addExpertAnswer, checkPiece, lockedOutline, lockedSection, addFormats, addResearch, applyAlignmentFixes, completeResearch, confirmOutline, confirmScope, createCompany,
   getContextDocuments, getPiece, getResearch, getReviewInput, getSection, getSetup, getVoice, listPieces, markFindings, reviewResearch,
   saveAnalysis, saveContextDocument, saveFinalChecks, saveOutline, saveOutlineChecks, saveScope, saveSectionChecks, saveSectionDraft,
   saveSectionPoints, startPiece, useResearch,
@@ -73,7 +73,7 @@ server.registerTool("writ_save_section_draft", {
   description: "Saves a drafted section into Writ for the writer to review and edit. It becomes the section's text only if the writer has not written any yet, and is always kept as the AI draft (so the record shows it was AI-drafted). Never overwrites the writer's text. Markdown only: ### and #### headings, no # or ##.",
   inputSchema: { section_id: z.string(), text: z.string().describe("The section text as Markdown") },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ section_id, text }) => run((c) => saveSectionDraft(c, section_id, text)));
+}, ({ section_id, text }) => run((c) => lockedSection(c, section_id, () => saveSectionDraft(c, section_id, text))));
 
 server.registerTool("writ_get_setup", {
   title: "Where the writer stands in Writ",
@@ -226,14 +226,14 @@ server.registerTool("writ_save_outline", {
     })).describe("1 to 12 sections, usually 4 to 8 (up to 40 rows when sub-headings are included)"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ piece, sections }) => run((c) => saveOutline(c, piece, sections)));
+}, ({ piece, sections }) => run((c) => lockedOutline(c, piece, () => saveOutline(c, piece, sections))));
 
 server.registerTool("writ_confirm_outline", {
   title: "Confirm a piece's outline",
   description: "Confirms the saved outline through Writ and moves the piece to writing. Only call it after the writer has clearly approved this outline.",
   inputSchema: { piece: z.string().describe("The piece code (SI-0012) or id"), writer_approved: approved("this outline") },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ piece }) => run((c) => confirmOutline(c, piece)));
+}, ({ piece }) => run((c) => lockedOutline(c, piece, () => confirmOutline(c, piece))));
 
 server.registerTool("writ_use_research", {
   title: "Use approved research in a section",
@@ -256,7 +256,7 @@ server.registerTool("writ_save_section_points", {
     })).describe("1 to 12 points, usually 4 to 10"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ section_id, points }) => run((c) => saveSectionPoints(c, section_id, points)));
+}, ({ section_id, points }) => run((c) => lockedSection(c, section_id, () => saveSectionPoints(c, section_id, points))));
 
 const contractResult = z.object({
   expectation: z.number().int().describe("The scope point's number from writ_get_check_input"),
@@ -297,7 +297,7 @@ server.registerTool("writ_save_analysis", {
     contract_suggestions: z.array(z.object({ change: z.string(), why: z.string() })).optional().describe("Suggested changes to the scope; the writer decides"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ piece, ...a }) => run((c) => saveAnalysis(c, piece, a)));
+}, ({ piece, ...a }) => run((c) => lockedOutline(c, piece, () => saveAnalysis(c, piece, a))));
 
 server.registerTool("writ_mark_findings", {
   title: "Record decisions on analysis findings",
@@ -308,7 +308,7 @@ server.registerTool("writ_mark_findings", {
     writer_approved: approved("these decisions"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ piece, marks }) => run((c) => markFindings(c, piece, marks)));
+}, ({ piece, marks }) => run((c) => lockedOutline(c, piece, () => markFindings(c, piece, marks))));
 
 server.registerTool("writ_apply_alignment_fixes", {
   title: "Apply fixes from the gap analysis",
@@ -326,7 +326,7 @@ server.registerTool("writ_apply_alignment_fixes", {
     writer_approved: approved("these fixes"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-}, ({ piece, fixes, resolves }) => run((c) => applyAlignmentFixes(c, piece, fixes, resolves)));
+}, ({ piece, fixes, resolves }) => run((c) => lockedOutline(c, piece, () => applyAlignmentFixes(c, piece, fixes, resolves))));
 
 server.registerTool("writ_add_expert_answer", {
   title: "Add the writer's own answer to the research",
@@ -337,7 +337,7 @@ server.registerTool("writ_add_expert_answer", {
     writer_approved: approved("adding this answer to the research"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-}, ({ piece, answer }) => run((c) => addExpertAnswer(c, piece, answer)));
+}, ({ piece, answer }) => run((c) => lockedOutline(c, piece, () => addExpertAnswer(c, piece, answer))));
 
 server.registerTool("writ_save_outline_checks", {
   title: "Save the outline's SEO and GEO check",

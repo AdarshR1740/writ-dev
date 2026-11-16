@@ -87,3 +87,15 @@ node scripts/export-step-views.mjs D:/projects/writ-dev
 ```
 
 Run it again whenever `stepViews.ts` changes in the app, and commit the result. The `new_piece` prompt tells Claude to call the check after changing the outline or finishing a step, and to tell the writer about every problem it reports.
+
+## 5. Edit locks
+
+One person (or one Claude) at a time edits the outline, and each section's text. A lock is taken on the first edit, renewed while work goes on, and frees itself a few minutes after the last activity. The database enforces it (migration `20261129000000_edit_locks.sql`); the app shows a banner with "Take over".
+
+**What changes for this server**
+- Eight write tools can now be **refused** while the writer holds the lock: `writ_save_outline`, `writ_confirm_outline`, `writ_save_analysis`, `writ_mark_findings`, `writ_apply_alignment_fixes`, `writ_add_expert_answer` (outline), and `writ_save_section_points`, `writ_save_section_draft` (a section). The message says who is editing and what to do; nothing is saved. Their parameters and results are unchanged.
+- Each Claude connection sends `x-writ-client` (a per-process id) with every request, and takes the lock only for the length of a write, so it never keeps the writer out.
+- `writ_check_piece` reports who is editing (a note, never a problem).
+- A Writ database without the lock functions behaves as before: the tools detect that and write normally. Apply the migration first or last; both orders are safe.
+
+**Rule:** any new tool that changes the outline's structure or a section's text must run inside `lockedOutline` or `lockedSection` (see `src/writ.ts`), and the database will refuse it if it does not hold the lock. Writes made by Writ's own server functions (the service role) are not checked.

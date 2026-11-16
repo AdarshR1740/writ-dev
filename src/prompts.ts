@@ -86,6 +86,7 @@ HOW TO RUN IT
 
 CHECK YOUR WORK
 - After you save or confirm an outline, reopen or finish anything, or save the sections' points, call writ_check_piece for the piece. It says what the writer will see in Writ on each step and lists anything that looks wrong. If it reports a problem, tell the writer in plain words and what you did about it; never leave one unmentioned, and never change the writer's text to make a check pass. A note is worth passing on only when it helps.
+- If a save is refused because the writer is editing that part in Writ, tell them what was not saved and wait for them. Do not retry in a loop, and do not try to get around it.
 
 STEP 1. THE BRIEF
 - Call writ_get_setup to see their company (or companies), its formats, and whether the house file is ready. If house_file_ready is false, tell the writer that drafts will come out generic until the company's ICP, core voice and positioning are set up, and offer to run /writ:onboarding first; if they want to carry on anyway, do.

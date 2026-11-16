@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { checkPiece, getPiece, getSection, saveOutline, saveSectionDraft, WritError } from "./writ.js";
+import { checkPiece, getPiece, getSection, lockedMessage, lockedOutline, lockedSection, saveOutline, saveSectionDraft, withLock, WritError } from "./writ.js";
+import { CLIENT_ID } from "./client-id.js";
 
 const PIECE = "22222222-2222-4222-8222-222222222222";
 const S1 = "11111111-1111-4111-8111-111111111111";
@@ -194,7 +195,7 @@ describe("saveOutline keeps what a kept section covers when covers is left out",
 });
 
 /** A stand-in for checkPiece: the piece, its scope, its research and its sections. `old` has no level or depth column. */
-function checkDb(opts: { piece?: Record<string, unknown>; sections?: Record<string, unknown>[]; analysis?: unknown; old?: boolean; fail?: string } = {}) {
+function checkDb(opts: { piece?: Record<string, unknown>; sections?: Record<string, unknown>[]; analysis?: unknown; old?: boolean; fail?: string; locks?: unknown[] } = {}) {
   const sections = (opts.sections ?? [
     { position: 1, heading: "A", status: "writing", content: "one two three", points: { points: [{}] }, brief: null, ai_draft: "x", level: 2 },
     { position: 2, heading: "B", status: "writing", content: "four five", points: { points: [{}] }, brief: null, ai_draft: "x", level: 2 },
@@ -215,6 +216,7 @@ function checkDb(opts: { piece?: Record<string, unknown>; sections?: Record<stri
             return (resolve: (v: unknown) => void) => {
               if (table === opts.fail) return resolve({ data: null, error: { message: "boom" } });
               if (table === "piece_sections" && opts.old && /\b(level|depth)\b/.test(cols)) return resolve({ data: null, error: { message: "column piece_sections.level does not exist" } });
+              if (table === "edit_locks") return resolve({ data: opts.locks ?? [], error: null });
               if (table === "piece_sections") return resolve({ data: sections, error: null });
               if (table === "research_items") return resolve({ data: [{ status: "approved" }, { status: "approved" }, { status: "unreviewed" }], error: null });
               return resolve({ data: [], error: null });
@@ -258,5 +260,90 @@ describe("checkPiece", () => {
   it("treats a piece with a saved analysis as having had its benchmark run", async () => {
     const r = await checkPiece(checkDb({ analysis: { alignment: { verdict: "aligned", summary: "" }, benchmark_done: true } }), "SI-0001");
     expect(r.concerns.map((c) => c.id)).not.toContain("benchmark-not-run");
+  });
+});
+
+/** A stand-in with a scriptable lock: it records acquire and release calls. */
+function lockDb(acquire: unknown, opts: { error?: { code?: string; message: string } } = {}) {
+  const calls: { fn: string; args: Record<string, unknown> }[] = [];
+  const db = {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      calls.push({ fn, args });
+      if (fn === "acquire_lock") return opts.error ? { data: null, error: opts.error } : { data: acquire, error: null };
+      return { data: null, error: null };
+    },
+    from() {
+      const q: Record<string | symbol, unknown> = new Proxy({}, {
+        get(_t, prop) {
+          if (prop === "maybeSingle") return async () => ({ data: { id: PIECE, code: "SI-0001", piece_id: PIECE, stage: "outline", company_id: "c", recipe: {} }, error: null });
+          return () => q;
+        },
+      });
+      return q;
+    },
+  } as unknown as SupabaseClient;
+  return { db, calls };
+}
+
+describe("edit locks on Claude's writes", () => {
+  it("takes the lock as Claude, runs the write, and lets go", async () => {
+    const { db, calls } = lockDb({ ok: true, token: "tok-1" });
+    const r = await withLock(db, PIECE, "outline", null, async () => "saved");
+    expect(r).toBe("saved");
+    expect(calls.map((c) => c.fn)).toEqual(["acquire_lock", "release_lock"]);
+    expect(calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: "outline", target_section: null, client: CLIENT_ID, kind: "ai", take_over: false });
+    expect(CLIENT_ID).toMatch(/^ai-/);
+    // Only this lock is let go: a slow release can never undo a newer one.
+    expect(calls[1].args).toMatchObject({ lock_token: "tok-1", client: CLIENT_ID });
+  });
+
+  it("writes nothing and says who is editing when someone else holds it", async () => {
+    const { db, calls } = lockDb({ ok: false, holder_label: "Adarsh", holder_kind: "person", since: "2026-11-16T10:02:00Z", expires_at: "2026-11-16T10:05:00Z" });
+    let ran = false;
+    await expect(withLock(db, PIECE, "section", S1, async () => { ran = true; })).rejects.toThrow(/Adarsh is editing the section in Writ \(since 10:02 UTC\)\. Nothing was saved/);
+    expect(ran).toBe(false);
+    expect(calls.map((c) => c.fn)).toEqual(["acquire_lock"]);
+    expect(lockedMessage({ holder_label: "X", since: "bad" }, "outline")).toMatch(/^X is editing the outline in Writ\. Nothing was saved\./);
+  });
+
+  it("lets go even when the write fails", async () => {
+    const { db, calls } = lockDb({ ok: true });
+    await expect(withLock(db, PIECE, "outline", null, async () => { throw new WritError("boom"); })).rejects.toThrow("boom");
+    expect(calls.map((c) => c.fn)).toEqual(["acquire_lock", "release_lock"]);
+  });
+
+  it("behaves as before on a Writ database that has no lock functions yet", async () => {
+    const { db, calls } = lockDb(null, { error: { code: "PGRST202", message: "Could not find the function public.acquire_lock" } });
+    expect(await withLock(db, PIECE, "outline", null, async () => 7)).toBe(7);
+    expect(calls.map((c) => c.fn)).toEqual(["acquire_lock"]);
+    const other = lockDb(null, { error: { code: "XX000", message: "something else broke" } });
+    await expect(withLock(other.db, PIECE, "outline", null, async () => 7)).rejects.toThrow(/Could not check the edit lock/);
+  });
+
+  it("finds the piece for an outline or a section before locking", async () => {
+    const a = lockDb({ ok: true });
+    await lockedOutline(a.db, "SI-0001", async () => undefined);
+    expect(a.calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: "outline" });
+    const b = lockDb({ ok: true });
+    await lockedSection(b.db, S2, async () => undefined);
+    expect(b.calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: "section", target_section: S2 });
+    await expect(lockedSection(b.db, "not-an-id", async () => undefined)).rejects.toThrow(/section_id must be/);
+  });
+});
+
+describe("checkPiece and edit locks", () => {
+  const held = (label: string, client: string, scope = "outline", sectionId = "") => ({ scope, section_id: sectionId, holder_client: client, holder_label: label, holder_kind: "person", acquired_at: "2026-11-16T10:02:00Z" });
+  it("tells Claude who is editing, so a refused save is not a surprise", async () => {
+    const r = await checkPiece(checkDb({ locks: [held("Adarsh", "web-1")] }), "SI-0001");
+    expect(r.concerns.find((c) => c.id === "locked-outline")?.message).toBe("Adarsh is editing the outline in Writ (since 10:02 UTC).");
+    expect(r.healthy).toBe(true);
+  });
+  it("does not report Claude's own lock", async () => {
+    const r = await checkPiece(checkDb({ locks: [held("Claude (for Adarsh)", CLIENT_ID)] }), "SI-0001");
+    expect(r.concerns.map((c) => c.id)).not.toContain("locked-outline");
+  });
+  it("copes with a database that has no edit_locks table", async () => {
+    const r = await checkPiece(checkDb({ fail: "edit_locks" }), "SI-0001");
+    expect(r.concerns.map((c) => c.id)).not.toContain("locked-outline");
   });
 });
