@@ -1,7 +1,7 @@
 # Hosting Writ on the Oracle VM
 
-Serves the web app at `https://writ-v1.duckdns.org`. Supabase stays where it is. The remote MCP server (`/mcp`) is reserved in the
-Caddyfile but not built yet. Files: `deploy/Caddyfile`, `deploy/deploy.sh`.
+Serves the web app at `https://writ-v1.duckdns.org`. Supabase stays where it is. The remote MCP server (`/mcp`) is not built yet and will be added to the
+Caddy config in a later change. Files: `deploy/writ.caddy`, `deploy/deploy.sh`.
 
 ## One-time setup
 
@@ -12,8 +12,7 @@ Caddyfile but not built yet. Files: `deploy/Caddyfile`, `deploy/deploy.sh`.
    - On the VM (Ubuntu images block them): `sudo iptables -I INPUT 6 -p tcp --dport 80 -j ACCEPT`, the same for 443, then
      `sudo netfilter-persistent save`.
 3. **DuckDNS.** Add the subdomain `writ-v1` pointing at the VM's public IP (the same IP as jobdeck).
-4. **Install Node 20+, git and Caddy** (Caddy: see caddyserver.com/docs/install#debian-ubuntu-raspbian). On a 1 GB VM add swap first,
-   or the build may run out of memory:
+4. **Install Node 20+ and git** (no separate Caddy). Add swap first, since jobdeck leaves little free RAM and the build may run out of memory:
    `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile`
    (add `/swapfile none swap sw 0 0` to `/etc/fstab` to keep it after a reboot).
 5. **Get the code.** The repo is public-or-private on GitHub; for a private one add a read-only deploy key.
@@ -29,7 +28,13 @@ Caddyfile but not built yet. Files: `deploy/Caddyfile`, `deploy/deploy.sh`.
    EOF
    ```
    The anon key is in web/.env.local (`VITE_SUPABASE_ANON_KEY`). Never put the service-role key here.
-7. **Caddy.** `sudo cp /srv/writ/repo/deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy`
+7. **Caddy (shared with jobdeck).** Jobdeck already runs Caddy in Docker on ports 80 and 443, so Writ is added to it, not a second Caddy.
+   In `~/jobdeck-v2`: add two read-only mounts to the `caddy` service's `volumes` in `docker-compose.prod.yml`
+   (`/srv/writ:/srv/writ:ro` and `/etc/writ:/etc/writ:ro`), add the line `import /srv/writ/repo/deploy/*.caddy` at the end of its
+   `Caddyfile`, then recreate Caddy: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps caddy` (`--no-deps` stops it from also starting jobdeck's app and database;
+   a few seconds of downtime for jobdeck if it's running).
+   After that, a change to `deploy/writ.caddy` only needs: `docker exec jobdeck-v2-caddy-1 caddy validate --config /etc/caddy/Caddyfile`
+   then `docker exec jobdeck-v2-caddy-1 caddy reload --config /etc/caddy/Caddyfile`.
 8. **Supabase auth settings** (dashboard, Authentication, URL Configuration): add `https://writ-v1.duckdns.org` as a Site URL or
    redirect URL. If the edge functions restrict origins (CORS), allow this origin too.
 
@@ -47,7 +52,7 @@ leaves the old version serving. The last 3 releases are kept; to roll back, poin
 
 A different branch: `WRIT_BRANCH=other ./deploy/deploy.sh <user>@<vm-ip>`.
 
-The script first updates the VM's clone, so the Caddyfile there is current. If a deploy changed `deploy/Caddyfile`, copy it again
+The script first updates the VM's clone, so `deploy/writ.caddy` there is current. If a deploy changed it, validate and reload Caddy
 (step 7). Commit and push `deploy/` before the first clone, or the clone won't have the script.
 
 ## Order when a change has a migration

@@ -1,4 +1,5 @@
-# Copy to /etc/caddy/Caddyfile on the VM. Caddy gets and renews the HTTPS certificate by itself.
+# Writ's site block. Not a standalone Caddyfile: jobdeck's Caddy imports it (see docs/hosting.md).
+# Caddy gets and renews the HTTPS certificate for this name by itself.
 writ-v1.duckdns.org {
 	encode zstd gzip
 
@@ -7,11 +8,6 @@ writ-v1.duckdns.org {
 		root * /etc/writ
 		header Cache-Control "no-store"
 		file_server
-	}
-
-	# Reserved for the remote MCP server (not built yet); until then this answers 502.
-	handle /mcp* {
-		reverse_proxy 127.0.0.1:3100
 	}
 
 	handle {
