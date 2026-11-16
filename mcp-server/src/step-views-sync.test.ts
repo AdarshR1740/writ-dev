@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /** src/step-views.ts is generated from the app's stepViews.ts. If the app is next to this repo, the two must still match. */
-const appFile = process.env.WRIT_APP_DIR ? `${process.env.WRIT_APP_DIR}/web/src/lib/stepViews.ts` : "../writ-dev/web/src/lib/stepViews.ts";
+const appFile = process.env.WRIT_APP_DIR ? `${process.env.WRIT_APP_DIR}/web/src/lib/stepViews.ts` : "../web/src/lib/stepViews.ts";
 
 describe("the generated step rules", () => {
   it.skipIf(!existsSync(appFile))("match the app's stepViews.ts (run scripts/export-step-views.mjs if this fails)", () => {

@@ -83,7 +83,7 @@ A screen shows or hides something only as a function of the data underneath, nev
 `writ_check_piece` describes what the writer will see on each step and lists what looks wrong. It runs those same rules: `src/step-views.ts` is **generated** from the app's `stepViews.ts`:
 
 ```bash
-node scripts/export-step-views.mjs D:/projects/writ-dev
+node scripts/export-step-views.mjs     # the app repo is the parent folder
 ```
 
 Run it again whenever `stepViews.ts` changes in the app, and commit the result. The `new_piece` prompt tells Claude to call the check after changing the outline or finishing a step, and to tell the writer about every problem it reports.

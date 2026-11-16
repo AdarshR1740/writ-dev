@@ -1,6 +1,6 @@
 // Regenerates src/format-presets.ts from the Writ web app, so the MCP server adds the same standard formats the app offers.
 //
-//   node scripts/export-format-presets.mjs D:/projects/writ-dev
+//   node scripts/export-format-presets.mjs        (the app repo is the parent folder; or pass its path)
 //
 // It bundles the app's own web/src/lib/sections.ts (FORMAT_TEMPLATES) and web/src/lib/recipes.ts (presetFor, validate),
 // then gives EVERY format the full blog workflow (the "longform_blog" recipe, with every step switched on): scope with its
@@ -19,8 +19,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import os from "node:os";
 
-const appRoot = process.argv[2];
-if (!appRoot) {
+const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+const appRoot = process.argv[2] ?? process.env.WRIT_APP_DIR ?? path.join(here, "..", "..");
+if (!fs.existsSync(path.join(appRoot, "web"))) {
   console.error("Usage: node scripts/export-format-presets.mjs <path to the Writ app repo>");
   process.exit(1);
 }

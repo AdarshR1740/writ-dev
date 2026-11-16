@@ -18,7 +18,7 @@ async function live(): Promise<{ tools: LiveTool[]; prompts: LivePrompt[] }> {
   return { tools, prompts };
 }
 const version = (JSON.parse(readFileSync("package.json", "utf8")) as { version: string }).version;
-const appFile = `${process.env.WRIT_APP_DIR ?? "../writ-dev"}/web/src/lib/mcpTools.generated.ts`;
+const appFile = `${process.env.WRIT_APP_DIR ?? ".."}/web/src/lib/mcpTools.generated.ts`;
 const norm = (s: string) => s.replace(/\r\n/g, "\n");
 
 describe("the tool reference", () => {

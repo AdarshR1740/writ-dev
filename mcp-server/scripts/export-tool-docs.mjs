@@ -2,7 +2,7 @@
 //   docs/TOOLS.md                                  (in this repo)
 //   <app>/web/src/lib/mcpTools.generated.ts       (the "Writ in Claude" page in the Writ app, if the app repo is found)
 //
-//   npm run docs:update            (builds first; the app repo is taken from WRIT_APP_DIR or ../writ-dev)
+//   npm run docs:update            (builds first; the app repo is the parent folder, or WRIT_APP_DIR)
 //
 // It starts the built server to see which tools and prompts exist and what their parameters are, and combines that with the
 // plain-language entries in src/tool-docs.ts. It stops with a clear message if a tool or prompt has no entry.
@@ -14,7 +14,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const appRoot = path.resolve(process.argv[2] ?? process.env.WRIT_APP_DIR ?? path.join(root, "..", "writ-dev"));
+const appRoot = path.resolve(process.argv[2] ?? process.env.WRIT_APP_DIR ?? path.join(root, ".."));
 const { buildReference, toMarkdown, toAppModule } = await import(pathToFileURL(path.join(root, "dist", "docs-build.js")).href);
 
 const client = new Client({ name: "docs", version: "0" });
