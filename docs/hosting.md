@@ -63,7 +63,9 @@ token (Supabase's OAuth server), separate from the app's sign-in; the server onl
 1. **Deploy once** so `/srv/writ/current/mcp-server/dist` exists (`./deploy/deploy.sh <user>@<vm-ip>`).
 2. **Supabase OAuth app** (dashboard, Authentication, OAuth Apps): create one named "Claude", redirect URIs
    `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback`. Keep "Allow Dynamic OAuth Apps" off.
-   Note its client ID (and secret, if it makes one).
+   Set **Token Endpoint Auth Method** to `client_secret_post`: claude.ai sends the secret in the request body, and with the default
+   `client_secret_basic` Supabase refuses it (`invalid_credentials`, HTTP 400 on `/auth/v1/oauth/token`).
+   Note its client ID and secret.
 3. **Settings file** `/srv/writ/mcp.env` (mode 600, never in git):
    ```
    PORT=3100
@@ -88,7 +90,9 @@ token (Supabase's OAuth server), separate from the app's sign-in; the server onl
 5. **Let Caddy's container reach it.** In `~/jobdeck-v2/docker-compose.prod.yml`, under the `caddy` service add
    `extra_hosts: ["host.docker.internal:host-gateway"]`, then recreate it (same command as step 7 above). On the VM allow the Docker
    networks to reach port 3100, then save the rule:
-   `sudo iptables -I INPUT 6 -s 172.16.0.0/12 -p tcp --dport 3100 -j ACCEPT && sudo netfilter-persistent save`.
+   it must sit above the firewall's `REJECT` rule or it does nothing. Find that rule's line number with
+   `sudo iptables -L INPUT -n --line-numbers` (it was 5 here), then
+   `sudo iptables -I INPUT <that number> -s 172.16.0.0/12 -p tcp --dport 3100 -j ACCEPT && sudo netfilter-persistent save`.
    Reload Caddy to pick up the `/mcp` routes (validate and reload, step 7).
 6. **Check:** `curl -i https://writ-v1.duckdns.org/mcp -X POST` answers `401` with a `www-authenticate` header, and
    `curl https://writ-v1.duckdns.org/.well-known/oauth-protected-resource/mcp` answers with JSON.
