@@ -1,3 +1,4 @@
+import { researchLocked } from "../lib/stepViews";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { callFunction, errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
@@ -66,7 +67,7 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
   const [note, setNote] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const locked = section ? section.status !== "research" : piece.stage !== "research";
+  const locked = section ? section.status !== "research" : researchLocked(piece.stage);
   const recipe = normalise(piece.recipe);
   const reviewing = recipe.research.review;
   const canSearch = recipe.research.web_search && (section ? recipe.sections.research : recipe.research.enabled);

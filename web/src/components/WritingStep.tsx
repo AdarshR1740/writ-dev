@@ -12,6 +12,7 @@ import { WriteLike } from "./WriteLike";
 import { SourceLinks } from "./Links";
 import { RichEditor, type RichEditorHandle } from "./RichEditor";
 import { RevisePanel } from "./Revise";
+import { writingState } from "../lib/stepViews";
 import { AiWritePanel, DraftOverview, FullDraft, PointsList, PreparePanel, StartChoice, isUnprepared } from "./SectionPrep";
 
 /** The state of one check against the text as it is now. A tick shows only while the text is unchanged since the check. */
@@ -74,8 +75,8 @@ export function WritingStep({ piece, onChanged, onContinue, onBusyChange, finish
   const autoPrepare = recipe.outline.mode !== "off";
   const unprepared = sections.filter(isUnprepared);
   // Once every section is prepared and no one has started writing, the choice is how: by hand, or using the AI.
-  const started = sections.some((s) => s.content.trim() || s.status === "written");
-  const showStart = autoPrepare && unprepared.length === 0 && !started && (selected === null || selected === "start");
+  const { startable } = writingState(sections, autoPrepare);
+  const showStart = startable && (selected === null || selected === "start");
   const busyRun = preparing || aiRunning;
   const upFront = piece.section_timing === "up_front" && recipe.sections.research;
   const researchOpen = sections.filter((s) => s.status === "research").length;

@@ -12,6 +12,7 @@ import { BlockTypePicker } from "./BlockTypePicker";
 import { ChatPanel } from "./ChatPanel";
 import { normalise } from "../lib/recipes";
 import { asDepth, blankMainWithSubs, DEPTH_LABELS, groupEnd, moveGroup, moveSub, setLevel, type Draft } from "../lib/outlineRows";
+import { outlineView } from "../lib/stepViews";
 
 /** The piece's working title and primary keyword, editable on the outline. Each is saved when you leave its box. */
 function TitleFields({ piece, disabled, onSaved }: { piece: Piece; disabled: boolean; onSaved: () => void }) {
@@ -126,6 +127,8 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   const [fixReply, setFixReply] = useState<string | null>(null);
   // The conversation can take over the screen; the outline then shows as a compact bar.
   const [chatOpen, setChatOpen] = useState(false);
+  // The benchmark opened by hand over an outline that already exists.
+  const [benchmarkOpen, setBenchmarkOpen] = useState(false);
   // The outline as it was before "Fix now" changed it, so the change can be undone.
   const [undo, setUndo] = useState<Draft[] | null>(null);
   const confirmed = Boolean(piece.outline_confirmed_at);
@@ -338,8 +341,9 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
   // The benchmark comes first. Once the writer finalizes it, it gives way to the outline editor. A format with no
   // benchmark, or an outline that is already confirmed, goes straight to the editor.
   const benchmarkDone = Boolean((piece.analysis as Analysis | null)?.benchmark_done);
-  const showBenchmark = recipe.analysis.enabled && !confirmed && !benchmarkDone;
-  const showOutline = !recipe.analysis.enabled || confirmed || benchmarkDone;
+  const { showBenchmark, showOutline, offerBenchmark, offerBack } = outlineView({
+    analysisEnabled: recipe.analysis.enabled, confirmed, benchmarkDone, hasOutline: data.sections.length > 0, benchmarkOpen,
+  });
 
   return (
     <div className="stack-lg">
@@ -350,8 +354,24 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
           <button type="button" className="btn btn-small" disabled={busy} onClick={() => act(async () => {
             const { benchmark_done: _done, ...rest } = (piece.analysis ?? {}) as Analysis;
             must(await supabase.from("pieces").update({ analysis: rest }).eq("id", piece.id).select("id"));
+            // The outline stays saved, so the benchmark is opened over it by hand.
+            setBenchmarkOpen(true);
             onChanged();
           })}>Show the benchmark</button>
+        </div>
+      )}
+      {offerBenchmark && (
+        <div className="row notice" style={{ alignItems: "center" }}>
+          <span className="small">The benchmark of your scope and research against the topic hasn't been run for this outline.</span>
+          <span className="spacer" />
+          <button type="button" className="btn btn-small" disabled={busy} onClick={() => setBenchmarkOpen(true)}>Run the benchmark</button>
+        </div>
+      )}
+      {offerBack && (
+        <div className="row notice" style={{ alignItems: "center" }}>
+          <span className="small">Your outline is saved. Creating a new one from the benchmark replaces it.</span>
+          <span className="spacer" />
+          <button type="button" className="btn btn-small" onClick={() => setBenchmarkOpen(false)}>Back to the outline</button>
         </div>
       )}
       {showBenchmark && (
