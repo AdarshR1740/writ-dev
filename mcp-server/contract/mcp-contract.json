@@ -1,0 +1,1361 @@
+{
+  "tools": [
+    {
+      "name": "writ_add_expert_answer",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "answer": {
+            "description": "The writer's answer, in their own words",
+            "type": "string"
+          },
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to adding this answer to the research in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "piece",
+          "answer",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_add_formats",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "company": {
+            "description": "Company name or id, needed only when the writer belongs to more than one",
+            "type": "string"
+          },
+          "templates": {
+            "description": "Template keys or names to add; leave out for all of them",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to adding the standard formats in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_add_research",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "auto": {
+            "description": "True when preparing a section whose brief step is open",
+            "type": "boolean"
+          },
+          "findings": {
+            "description": "1 to 20 findings",
+            "items": {
+              "properties": {
+                "published": {
+                  "description": "The publication date, if known",
+                  "type": "string"
+                },
+                "quote": {
+                  "description": "A short passage copied word for word from the page that supports the statement",
+                  "type": "string"
+                },
+                "secondary": {
+                  "description": "True if the page reports someone else's figure or claim",
+                  "type": "boolean"
+                },
+                "source_type": {
+                  "enum": [
+                    "original_research",
+                    "official",
+                    "practitioner",
+                    "critical",
+                    "data",
+                    "web",
+                    "serp"
+                  ],
+                  "type": "string"
+                },
+                "statement": {
+                  "description": "The finding in one plain sentence, with the figure, date and name it concerns (at most 1200 characters)",
+                  "type": "string"
+                },
+                "title": {
+                  "description": "The page title",
+                  "type": "string"
+                },
+                "url": {
+                  "description": "The page the fact comes from (http or https)",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url",
+                "statement",
+                "source_type"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "gap": {
+            "description": "The gap this search is aimed at (gap-0, gap-1), for research that answers a gap found by the gap analysis; allowed while the outline is open",
+            "type": "string"
+          },
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "section_id": {
+            "description": "Add the findings to this section's research instead of the piece's",
+            "type": "string"
+          }
+        },
+        "required": [
+          "piece",
+          "findings"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_apply_alignment_fixes",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "fixes": {
+            "properties": {
+              "add_points": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "add_sections": {
+                "items": {
+                  "properties": {
+                    "covers": {
+                      "description": "Existing scope point numbers only; to cover a new point, add the point in one call and the section in the next",
+                      "items": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "type": "array"
+                    },
+                    "heading": {
+                      "type": "string"
+                    },
+                    "purpose": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "heading"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "edit_points": {
+                "items": {
+                  "properties": {
+                    "point": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "point",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "reject_items": {
+                "description": "Research numbers to reject",
+                "items": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "remove_points": {
+                "items": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "resolves": {
+            "description": "Findings these fixes close (gap-0, drift-1, suggestion-0)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to these fixes in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "piece",
+          "fixes",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_check_piece",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "piece"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_complete_research",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to finishing the research in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "piece",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_confirm_outline",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to this outline in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "piece",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_confirm_scope",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to this exact scope in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "piece",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_create_company",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "name": {
+            "description": "The company name, 2 to 120 characters",
+            "type": "string"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to creating a company with exactly this name in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_get_check_input",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "analysis",
+              "outline",
+              "section",
+              "piece"
+            ],
+            "type": "string"
+          },
+          "section_id": {
+            "description": "Needed for scope section",
+            "type": "string"
+          }
+        },
+        "required": [
+          "piece",
+          "scope"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_get_context_documents",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "company": {
+            "description": "Company name or id, needed only when the writer belongs to more than one",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_get_piece",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "piece"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_get_research",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "section_id": {
+            "description": "Give it to list that section's own research",
+            "type": "string"
+          }
+        },
+        "required": [
+          "piece"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_get_section",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "section_id": {
+            "description": "The section id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_get_setup",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_get_voice",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "piece"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_list_pieces",
+      "readOnly": true,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "limit": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "stage": {
+            "description": "Only pieces at this stage",
+            "enum": [
+              "contract",
+              "research",
+              "outline",
+              "writing",
+              "done"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_mark_findings",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "marks": {
+            "items": {
+              "properties": {
+                "finding": {
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "ignored",
+                    "resolved",
+                    "open"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "finding",
+                "state"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to these decisions in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "piece",
+          "marks",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_review_research",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "decisions": {
+            "items": {
+              "properties": {
+                "decision": {
+                  "enum": [
+                    "approved",
+                    "rejected",
+                    "unreviewed"
+                  ],
+                  "type": "string"
+                },
+                "item": {
+                  "description": "The research item id from writ_get_research",
+                  "type": "string"
+                },
+                "statement": {
+                  "description": "The statement reworded by the writer, if they edited it",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "item",
+                "decision"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to these decisions in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "decisions",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_save_analysis",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "contract_suggestions": {
+            "description": "Suggested changes to the scope; the writer decides",
+            "items": {
+              "properties": {
+                "change": {
+                  "type": "string"
+                },
+                "why": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "change",
+                "why"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "drift": {
+            "description": "What has moved away from the topic, by theme; items are research numbers, points are scope point numbers",
+            "items": {
+              "properties": {
+                "items": {
+                  "items": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "points": {
+                  "items": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "gaps": {
+            "items": {
+              "properties": {
+                "expert_question": {
+                  "type": "string"
+                },
+                "points": {
+                  "items": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text",
+                "expert_question"
+              ],
+              "type": "object"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "summary": {
+            "description": "One or two sentences",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "aligned",
+              "partly",
+              "drifted"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "piece",
+          "verdict",
+          "summary"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_save_context_document",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "company": {
+            "description": "Company name or id, needed only when the writer belongs to more than one",
+            "type": "string"
+          },
+          "content": {
+            "description": "The document as Markdown",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "icp",
+              "core_voice",
+              "positioning",
+              "strategy_notes"
+            ],
+            "type": "string"
+          },
+          "replace": {
+            "description": "True only after the writer agreed to replace the existing text",
+            "type": "boolean"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to saving this document in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "content",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_save_final_checks",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "contract": {
+            "properties": {
+              "results": {
+                "items": {
+                  "properties": {
+                    "evidence": {
+                      "description": "For met and partly: the shortest passage from the text that shows it, copied exactly",
+                      "type": "string"
+                    },
+                    "expectation": {
+                      "description": "The scope point's number from writ_get_check_input",
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    },
+                    "gap": {
+                      "description": "For partly and missing: one plain sentence on what is missing",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "met",
+                        "partly",
+                        "missing"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "expectation",
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "results"
+            ],
+            "type": "object"
+          },
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "seo_geo": {
+            "properties": {
+              "checks": {
+                "items": {
+                  "properties": {
+                    "area": {
+                      "enum": [
+                        "seo",
+                        "geo"
+                      ],
+                      "type": "string"
+                    },
+                    "check": {
+                      "description": "The check's key, such as answer_first",
+                      "type": "string"
+                    },
+                    "evidence": {
+                      "description": "What you saw, quoted from the text when you can",
+                      "type": "string"
+                    },
+                    "fix": {
+                      "description": "For improve: one concrete fix",
+                      "type": "string"
+                    },
+                    "label": {
+                      "description": "A short plain-English name for the check",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fine",
+                        "improve",
+                        "n/a"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "area",
+                    "check",
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "meta_description": {
+                "type": "string"
+              },
+              "meta_title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "checks"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "piece"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_save_outline",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "sections": {
+            "description": "1 to 12 sections, usually 4 to 8 (up to 40 rows when sub-headings are included)",
+            "items": {
+              "properties": {
+                "covers": {
+                  "description": "Numbers of the scope points (1, 2, ...) this section serves. Omit it on a section you keep (id) to leave what it covers as it is; send [] to clear it",
+                  "items": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "depth": {
+                  "description": "How much a sub-heading should say. Omit to keep it",
+                  "enum": [
+                    "short",
+                    "standard",
+                    "deep"
+                  ],
+                  "type": "string"
+                },
+                "heading": {
+                  "description": "A specific heading, never Introduction, Overview or Conclusion",
+                  "type": "string"
+                },
+                "id": {
+                  "description": "The section id, when keeping an existing section",
+                  "type": "string"
+                },
+                "level": {
+                  "description": "2 for a main heading (H2), 3 for a sub-heading (H3) under the main heading above it. Omit to keep a section's level (a new one is a main heading). Sub-headings are only for formats with a free outline, and a sub-heading has no scope points",
+                  "maximum": 3,
+                  "minimum": 2,
+                  "type": "integer"
+                },
+                "purpose": {
+                  "description": "One line: what this section tells the reader",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "heading"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "piece",
+          "sections"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_save_outline_checks",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "checks": {
+            "items": {
+              "properties": {
+                "area": {
+                  "enum": [
+                    "seo",
+                    "geo"
+                  ],
+                  "type": "string"
+                },
+                "check": {
+                  "description": "The check's key, such as answer_first",
+                  "type": "string"
+                },
+                "evidence": {
+                  "description": "What you saw, quoted from the text when you can",
+                  "type": "string"
+                },
+                "fix": {
+                  "description": "For improve: one concrete fix",
+                  "type": "string"
+                },
+                "label": {
+                  "description": "A short plain-English name for the check",
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "fine",
+                    "improve",
+                    "n/a"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "area",
+                "check",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "piece",
+          "checks"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_save_scope",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "core_question": {
+            "description": "One question, one sentence",
+            "type": "string"
+          },
+          "piece": {
+            "description": "The piece code (SI-0012) or id",
+            "type": "string"
+          },
+          "points": {
+            "description": "The full list of points, one short line each (at most 7, or 2 for a short format)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "piece",
+          "core_question",
+          "points"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_save_section_checks",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "content_rev": {
+            "description": "The content_rev from writ_get_check_input",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "contract": {
+            "properties": {
+              "results": {
+                "items": {
+                  "properties": {
+                    "evidence": {
+                      "description": "For met and partly: the shortest passage from the text that shows it, copied exactly",
+                      "type": "string"
+                    },
+                    "expectation": {
+                      "description": "The scope point's number from writ_get_check_input",
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    },
+                    "gap": {
+                      "description": "For partly and missing: one plain sentence on what is missing",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "met",
+                        "partly",
+                        "missing"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "expectation",
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "results"
+            ],
+            "type": "object"
+          },
+          "fact": {
+            "description": "item is the research number for a mismatch; leave it out or use 0 for unsupported",
+            "properties": {
+              "flags": {
+                "items": {
+                  "properties": {
+                    "issue": {
+                      "type": "string"
+                    },
+                    "item": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    },
+                    "kind": {
+                      "enum": [
+                        "unsupported",
+                        "mismatch"
+                      ],
+                      "type": "string"
+                    },
+                    "sentence": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sentence",
+                    "kind",
+                    "issue"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "flags"
+            ],
+            "type": "object"
+          },
+          "grammar": {
+            "properties": {
+              "suggestions": {
+                "items": {
+                  "properties": {
+                    "original": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "original",
+                    "replacement"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "suggestions"
+            ],
+            "type": "object"
+          },
+          "section_id": {
+            "description": "The section id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "content_rev"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_save_section_draft",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "section_id": {
+            "type": "string"
+          },
+          "text": {
+            "description": "The section text as Markdown",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "text"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_save_section_points",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "points": {
+            "description": "1 to 12 points, usually 4 to 10",
+            "items": {
+              "properties": {
+                "direction": {
+                  "description": "How to treat it: the angle, an example to use, what to avoid. Not finished sentences",
+                  "type": "string"
+                },
+                "evidence": {
+                  "description": "The fact or figure to use and where it comes from; empty when no research supports the point",
+                  "type": "string"
+                },
+                "point": {
+                  "description": "The idea or claim, one short sentence",
+                  "type": "string"
+                },
+                "refs": {
+                  "description": "Numbers of the section's research items it uses",
+                  "items": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "sub_section": {
+                  "description": "The planned sub-section it belongs to, if any",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "point"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "section_id": {
+            "description": "The section id from writ_get_piece",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "points"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_start_piece",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "approval_contact": {
+            "description": "Who approves the piece at the customer, for formats that ask for it",
+            "type": "string"
+          },
+          "audience": {
+            "description": "Who it is for, if different from the company's usual reader",
+            "type": "string"
+          },
+          "company": {
+            "description": "Company name or id, needed only when the writer belongs to more than one",
+            "type": "string"
+          },
+          "cta": {
+            "description": "The call to action, for formats that ask for one",
+            "type": "string"
+          },
+          "customer": {
+            "description": "The customer, for formats that ask for one (see brief_asks_for in writ_get_setup)",
+            "type": "string"
+          },
+          "format": {
+            "description": "A format name or id from writ_get_setup",
+            "type": "string"
+          },
+          "goal": {
+            "description": "What the piece should achieve",
+            "type": "string"
+          },
+          "keyword": {
+            "description": "The primary keyword",
+            "type": "string"
+          },
+          "offer": {
+            "description": "The offer, for formats that ask for one",
+            "type": "string"
+          },
+          "timing": {
+            "description": "Leave out to use the format's default",
+            "enum": [
+              "just_in_time",
+              "up_front"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "description": "The piece title, 1 to 200 characters",
+            "type": "string"
+          },
+          "topic": {
+            "description": "What the piece is about",
+            "type": "string"
+          },
+          "writer_approved": {
+            "const": true,
+            "description": "Must be true, and only after the writer has said yes to creating this piece in this conversation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "title",
+          "topic",
+          "writer_approved"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "writ_use_research",
+      "readOnly": false,
+      "input": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "item_ids": {
+            "description": "Research item ids",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "section_id": {
+            "description": "The section id from writ_get_piece",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "item_ids"
+        ],
+        "type": "object"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "name": "new_piece",
+      "arguments": [
+        {
+          "name": "idea",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "onboarding",
+      "arguments": []
+    },
+    {
+      "name": "write_section",
+      "arguments": [
+        {
+          "name": "piece",
+          "required": true
+        },
+        {
+          "name": "section_id",
+          "required": true
+        }
+      ]
+    }
+  ]
+}
