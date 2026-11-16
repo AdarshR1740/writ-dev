@@ -20,6 +20,7 @@ import { LeaderVoicesPage } from "./pages/LeaderVoicesPage";
 import { PromptsPage } from "./pages/PromptsPage";
 import { ClaudePage } from "./pages/ClaudePage";
 import { HistoryPage } from "./pages/HistoryPage";
+import { OAuthConsentPage } from "./pages/OAuthConsentPage";
 import { NewRepurposePage, RepurposePlanPage } from "./pages/RepurposePage";
 
 export function App() {
@@ -51,6 +52,8 @@ function Routed() {
   return (
     <Routes>
       <Route path="/invite/:token" element={<InvitePage />} />
+      {/* Only once signed in: before that the sign-in page shows at this same address, then this. */}
+      {session && <Route path="/oauth/consent" element={<OAuthConsentPage />} />}
       {!session ? (
         <Route path="*" element={<AuthPage />} />
       ) : companies.length === 0 ? (

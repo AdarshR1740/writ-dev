@@ -663,8 +663,8 @@ const lockFunctionsMissing = (e: { code?: string; message?: string }) =>
  * Runs a write while holding the lock on the outline or a section, and lets go afterwards. If someone else holds it, nothing is
  * written and Claude is told who and what to do. A Writ database without the lock functions behaves as before.
  */
-export async function withLock<T>(db: SupabaseClient, pieceId: string, scope: LockScope, sectionId: string | null, fn: () => Promise<T>): Promise<T> {
-  const args = { target_piece: pieceId, lock_scope: scope, target_section: sectionId, client: CLIENT_ID };
+export async function withLock<T>(db: SupabaseClient, pieceId: string, scope: LockScope, sectionId: string | null, fn: () => Promise<T>, clientId: string = CLIENT_ID): Promise<T> {
+  const args = { target_piece: pieceId, lock_scope: scope, target_section: sectionId, client: clientId };
   const r = await db.rpc("acquire_lock", { ...args, kind: "ai", take_over: false, lease_seconds: 60 });
   if (r.error) {
     if (lockFunctionsMissing(r.error)) return fn();
@@ -680,15 +680,15 @@ export async function withLock<T>(db: SupabaseClient, pieceId: string, scope: Lo
   }
 }
 
-export async function lockedOutline<T>(db: SupabaseClient, ref: string, fn: () => Promise<T>): Promise<T> {
+export async function lockedOutline<T>(db: SupabaseClient, ref: string, fn: () => Promise<T>, clientId: string = CLIENT_ID): Promise<T> {
   const piece = await findPiece(db, ref);
-  return withLock(db, piece.id, "outline", null, fn);
+  return withLock(db, piece.id, "outline", null, fn, clientId);
 }
 
-export async function lockedSection<T>(db: SupabaseClient, sectionId: string, fn: () => Promise<T>): Promise<T> {
+export async function lockedSection<T>(db: SupabaseClient, sectionId: string, fn: () => Promise<T>, clientId: string = CLIENT_ID): Promise<T> {
   if (!UUID.test(sectionId.trim())) throw new WritError("section_id must be the id shown by writ_get_piece.");
   const s = must(await db.from("piece_sections").select("piece_id").eq("id", sectionId.trim()).maybeSingle(), "Section") as { piece_id: string };
-  return withLock(db, s.piece_id, "section", sectionId.trim(), fn);
+  return withLock(db, s.piece_id, "section", sectionId.trim(), fn, clientId);
 }
 
 /**
@@ -696,7 +696,7 @@ export async function lockedSection<T>(db: SupabaseClient, sectionId: string, fn
  * app's screens use (step-views.ts is generated from the app), so a piece made here shows what it should in the app.
  * Read-only. Run it after saving an outline, reopening something, or finishing a step.
  */
-export async function checkPiece(db: SupabaseClient, ref: string) {
+export async function checkPiece(db: SupabaseClient, ref: string, clientId: string = CLIENT_ID) {
   const piece = await findPiece(db, ref);
   const [extra, contract, items, rows, held] = await Promise.all([
     db.from("pieces").select("analysis, signed_off_at").eq("id", piece.id).maybeSingle(),
@@ -734,7 +734,7 @@ export async function checkPiece(db: SupabaseClient, ref: string) {
     research: { approved: counts.approved ?? 0, unreviewed: counts.unreviewed ?? 0 },
     locks: ((held.error ? [] : held.data ?? []) as { scope: "outline" | "section"; section_id: string; holder_client: string; holder_label: string; holder_kind: "person" | "ai"; acquired_at: string }[])
       // This connection's own lock is not news.
-      .filter((l) => l.holder_client !== CLIENT_ID)
+      .filter((l) => l.holder_client !== clientId)
       .map((l) => ({
         scope: l.scope, holder: l.holder_label, kind: l.holder_kind, since: `${new Date(l.acquired_at).toISOString().slice(11, 16)} UTC`,
         ...(l.scope === "section" ? { section: (sections as unknown as { id?: string; heading: string }[]).find((s) => s.id === l.section_id)?.heading } : {}),

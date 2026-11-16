@@ -55,6 +55,46 @@ A different branch: `WRIT_BRANCH=other ./deploy/deploy.sh <user>@<vm-ip>`.
 The script first updates the VM's clone, so `deploy/writ.caddy` there is current. If a deploy changed it, validate and reload Caddy
 (step 7). Commit and push `deploy/` before the first clone, or the clone won't have the script.
 
+## Hosted MCP server (for Claude chats in the browser)
+
+Writers add `https://writ-v1.duckdns.org/mcp` as a custom connector in claude.ai and sign in with their Writ account. Claude gets its own
+token (Supabase's OAuth server), separate from the app's sign-in; the server only accepts tokens issued to the OAuth app below.
+
+1. **Deploy once** so `/srv/writ/current/mcp-server/dist` exists (`./deploy/deploy.sh <user>@<vm-ip>`).
+2. **Supabase OAuth app** (dashboard, Authentication, OAuth Apps): create one named "Claude", redirect URIs
+   `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback`. Keep "Allow Dynamic OAuth Apps" off.
+   Note its client ID (and secret, if it makes one).
+3. **Settings file** `/srv/writ/mcp.env` (mode 600, never in git):
+   ```
+   PORT=3100
+   HOST=0.0.0.0
+   WRIT_PUBLIC_URL=https://writ-v1.duckdns.org
+   WRIT_SUPABASE_URL=https://plqzeqaswtokfsgudmld.supabase.co
+   WRIT_SUPABASE_ANON_KEY=<anon key>
+   WRIT_OAUTH_CLIENT_IDS=<the OAuth app's client ID>
+   ```
+   `HOST=0.0.0.0` is needed so Caddy's container can reach it. Oracle's security list and the VM firewall only let 22, 80 and 443 in
+   from outside, so port 3100 stays private. After step 5, check from your own machine that `http://<vm-ip>:3100/healthz` does not answer.
+4. **Service:**
+   ```bash
+   mkdir -p ~/.config/systemd/user && cp /srv/writ/repo/deploy/writ-mcp.service ~/.config/systemd/user/
+   chmod 600 /srv/writ/mcp.env && loginctl enable-linger $USER
+   systemctl --user daemon-reload && systemctl --user enable --now writ-mcp
+   curl -s http://127.0.0.1:3100/healthz
+   ```
+   Later deploys restart it automatically. The unit asks for a 400 MB memory cap; a user service may ignore it. Check with
+   `systemctl --user show -p MemoryMax writ-mcp` (it should not say `infinity`), and if it does, watch `free -m` instead.
+   Logs: `journalctl --user -u writ-mcp -n 50`.
+5. **Let Caddy's container reach it.** In `~/jobdeck-v2/docker-compose.prod.yml`, under the `caddy` service add
+   `extra_hosts: ["host.docker.internal:host-gateway"]`, then recreate it (same command as step 7 above). On the VM allow the Docker
+   networks to reach port 3100, then save the rule:
+   `sudo iptables -I INPUT 6 -s 172.16.0.0/12 -p tcp --dport 3100 -j ACCEPT && sudo netfilter-persistent save`.
+   Reload Caddy to pick up the `/mcp` routes (validate and reload, step 7).
+6. **Check:** `curl -i https://writ-v1.duckdns.org/mcp -X POST` answers `401` with a `www-authenticate` header, and
+   `curl https://writ-v1.duckdns.org/.well-known/oauth-protected-resource/mcp` answers with JSON.
+7. **Add it in claude.ai:** Settings, Connectors, add custom connector, URL `https://writ-v1.duckdns.org/mcp`. Under advanced settings
+   enter the OAuth app's client ID and secret. Sign in and press Allow on the Writ page.
+
 ## Order when a change has a migration
 
 Migrate first, deploy the VM after. Claude will say when a change needs a migration. Migrations must work with the previous app version.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run on the VM (or from your machine: ./deploy/deploy.sh user@host). Updates /srv/writ to origin/main,
-# builds the web app, and switches over only if the build and its tests pass. Nothing runs by itself:
+# builds the web app and the MCP server, and switches over only if the build and its tests pass. Nothing runs by itself:
 # this costs nothing until you start it.
 set -euo pipefail
 
@@ -29,9 +29,12 @@ trap 'echo "Deploy failed; ${OLD:+still serving ${OLD:0:7}.}${OLD:-nothing is be
 
 echo "Building ${NEW:0:7}..."
 ( cd "$DIR/web" && npm ci --no-audit --no-fund && npm test && npm run build )
+( cd "$DIR/mcp-server" && npm ci --no-audit --no-fund && npm test )
 
 ln -sfn "$DIR" "$CURRENT.new" && mv -T "$CURRENT.new" "$CURRENT"
 trap - ERR
+# The hosted MCP server, if it has been set up on this machine (docs/hosting.md): restart it on the new version.
+if systemctl --user cat writ-mcp >/dev/null 2>&1; then systemctl --user restart writ-mcp && echo "Restarted the MCP server."; fi
 # Keep the last 3 releases for rollback (switch /srv/writ/current back to one of them).
 SERVING=$(readlink -f "$CURRENT")
 ls -1dt "$RELEASES"/*/ | tail -n +4 | while read -r d; do

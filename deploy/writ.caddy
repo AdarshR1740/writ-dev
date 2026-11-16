@@ -10,6 +10,25 @@ writ-v1.duckdns.org {
 		file_server
 	}
 
+	# The hosted MCP server, a service on the VM itself (Caddy runs in Docker, hence host.docker.internal).
+	handle /mcp {
+		reverse_proxy host.docker.internal:3100
+	}
+	handle /mcp/* {
+		reverse_proxy host.docker.internal:3100
+	}
+	handle /.well-known/oauth-protected-resource* {
+		reverse_proxy host.docker.internal:3100
+	}
+
+	# This site is not the sign-in server (Supabase is): answer 404, not the web app's page, so clients don't read HTML as metadata.
+	handle /.well-known/oauth-authorization-server* {
+		respond 404
+	}
+	handle /.well-known/openid-configuration* {
+		respond 404
+	}
+
 	handle {
 		root * /srv/writ/current/web/dist
 		try_files {path} /index.html

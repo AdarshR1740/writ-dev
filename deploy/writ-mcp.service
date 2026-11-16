@@ -1,0 +1,15 @@
+# User service (no sudo needed to restart it). Install: see "Hosted MCP server" in docs/hosting.md.
+[Unit]
+Description=Writ MCP server (hosted)
+After=network-online.target
+
+[Service]
+EnvironmentFile=/srv/writ/mcp.env
+ExecStart=/usr/bin/node /srv/writ/current/mcp-server/dist/index.js --http
+Restart=on-failure
+RestartSec=3
+# Small on purpose: jobdeck shares this machine.
+MemoryMax=400M
+
+[Install]
+WantedBy=default.target
