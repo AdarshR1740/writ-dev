@@ -32,6 +32,18 @@ fi
 echo "2/5 Linking this folder to project $REF…"
 $SB link --project-ref "$REF"
 
+echo "    Type-checking the edge functions with Deno (a type error stops the setup before anything is changed)…"
+if command -v deno >/dev/null 2>&1; then
+  for dir in supabase/functions/*/; do
+    name=$(basename "$dir")
+    case "$name" in _*) continue ;; esac
+    (cd supabase/functions && deno check "$name/index.ts") || { echo "Type errors in the edge functions (above). Fix them, then run this again."; exit 1; }
+  done
+  echo "    No type errors."
+else
+  echo "    Deno isn't installed, so the edge functions weren't type-checked (https://deno.com)."
+fi
+
 echo "3/5 Applying the database migrations…"
 $SB db push
 

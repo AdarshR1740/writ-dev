@@ -44,6 +44,26 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "2/5 Linking this folder to project $Ref..."
 Supabase link --project-ref $Ref
 
+Write-Host "    Type-checking the edge functions with Deno (a type error stops the setup before anything is changed)..."
+$deno = (Get-Command deno -ErrorAction SilentlyContinue).Source
+if (-not $deno -and $env:LOCALAPPDATA) {
+  $deno = Get-ChildItem (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages") -Filter "DenoLand.Deno*" -ErrorAction SilentlyContinue |
+    ForEach-Object { Join-Path $_.FullName "deno.exe" } | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if ($deno) {
+  Push-Location supabase\functions
+  $typeErrors = $false
+  foreach ($fn in (Get-ChildItem -Directory | Where-Object { $_.Name -notlike "_*" } | Sort-Object Name)) {
+    $out = (& $deno check "$($fn.Name)/index.ts" 2>&1) -join "`n"
+    if ($LASTEXITCODE -ne 0) { $typeErrors = $true; Write-Host $out -ForegroundColor Red }
+  }
+  Pop-Location
+  if ($typeErrors) { Write-Host "Type errors in the edge functions (above). Fix them, then run this again." -ForegroundColor Red; exit 1 }
+  Write-Host "    No type errors."
+} else {
+  Write-Host "    Deno isn't installed, so the edge functions weren't type-checked (winget install DenoLand.Deno)." -ForegroundColor Yellow
+}
+
 Write-Host "3/5 Applying the database migrations..."
 Supabase db push
 
