@@ -134,3 +134,50 @@ export function applyOutlineChanges(
   }
   return { rows, title, summary: { edited: edited.size, added, moved: moved.size, blocks: blocksAdded } };
 }
+
+/** A row of the outline, as much of it as the family of a section needs. */
+export interface FamilyRow { position: number; heading: string; purpose?: string | null; level?: number | null }
+
+export interface SectionFamily {
+  /** The sub-headings under this section, when it is a main heading that has some. */
+  children: FamilyRow[];
+  /** The main heading above this section, when it is a sub-heading. */
+  parent: FamilyRow | null;
+  /** The other sub-headings under the same main heading, in order, when this one is a sub-heading. */
+  siblings: FamilyRow[];
+}
+
+/**
+ * Where a section sits in the outline: a main heading (H2) with the sub-headings (H3) under it, or one of those sub-headings.
+ * Each row is prepared and written as its own section, so each needs to know its neighbours to avoid saying what they say.
+ */
+export function sectionFamily(rows: FamilyRow[], position: number): SectionFamily {
+  const sorted = [...rows].sort((a, b) => a.position - b.position);
+  const at = sorted.findIndex((r) => r.position === position);
+  if (at < 0) return { children: [], parent: null, siblings: [] };
+  if (sorted[at].level !== 3) {
+    const children: FamilyRow[] = [];
+    for (let i = at + 1; i < sorted.length && sorted[i].level === 3; i++) children.push(sorted[i]);
+    return { children, parent: null, siblings: [] };
+  }
+  let p = at - 1;
+  while (p >= 0 && sorted[p].level === 3) p--;
+  if (p < 0) return { children: [], parent: null, siblings: [] };
+  const siblings: FamilyRow[] = [];
+  for (let i = p + 1; i < sorted.length && sorted[i].level === 3; i++) if (i !== at) siblings.push(sorted[i]);
+  return { children: [], parent: sorted[p], siblings };
+}
+
+const line = (r: FamilyRow) => `- ${r.heading}${r.purpose ? ` (${r.purpose})` : ""}`;
+
+/** The lines the AI reads about a section's place in the outline. Empty for a main heading with no sub-headings. */
+export function familyNote(f: SectionFamily): string {
+  if (f.children.length) {
+    return `This main heading has sub-headings, each prepared and written as its own section:\n${f.children.map(line).join("\n")}\nThis section covers only what opens the main heading. It must not cover what its sub-headings cover.`;
+  }
+  if (f.parent) {
+    return `This is a sub-heading under the main heading "${f.parent.heading}"${f.parent.purpose ? ` (${f.parent.purpose})` : ""}.${
+      f.siblings.length ? `\nThe other sub-headings under it, written separately:\n${f.siblings.map(line).join("\n")}\nDo not repeat what they cover.` : ""}`;
+  }
+  return "";
+}

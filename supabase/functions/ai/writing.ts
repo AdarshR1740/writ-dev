@@ -24,7 +24,7 @@ import {
 import type { Prepared } from "./prepared.ts";
 import { promptSet } from "../_shared/prompt-overrides.ts";
 import { assemble, outlinePrefix } from "../_shared/assemble.ts";
-import { applyOutlineChanges, BLOCK_TYPES, cleanBlocks, LEVEL_DEPTHS, normaliseLevels, type OutlineChange } from "../_shared/outline.ts";
+import { applyOutlineChanges, BLOCK_TYPES, cleanBlocks, type FamilyRow, LEVEL_DEPTHS, normaliseLevels, type OutlineChange, sectionFamily } from "../_shared/outline.ts";
 
 // Still exported from here, where the rest of the app reads them.
 export { applyOutlineChanges, BLOCK_TYPES, normaliseLevels };
@@ -782,8 +782,16 @@ const sectionPointsSchema = obj({
   thin: list(str),
 });
 
+/** Whether a section is a main heading whose sub-headings are written as their own sections. */
+async function hasSubHeadings(piece: Piece, section: Awaited<ReturnType<typeof sectionFor>>["section"]): Promise<boolean> {
+  if (section.level === 3) return false;
+  const { data } = await sectionTexts<FamilyRow>(piece.id, "position, heading, purpose");
+  return sectionFamily(data ?? [], section.position).children.length > 0;
+}
+
 async function prepareSectionPoints(userId: string, body: Record<string, unknown>): Promise<Prepared> {
   const { piece, section } = await sectionFor(userId, body);
+  const parent = await hasSubHeadings(piece, section);
   requireStep(piece, setting<string>(piece, "outline.mode") !== "off", "Section talking points");
   if (section.status === "written") throw new UserError("This section is already written. Reopen it to prepare it again.");
   // Research for this section, then the piece's own approved research, as one numbered list.
@@ -809,7 +817,9 @@ async function prepareSectionPoints(userId: string, body: Record<string, unknown
     extra_sub_sections: { heading: string; why: string }[];
     thin: string[];
   }>(
-    "section_points", "reason", piece, userId, (await promptSet(piece.company_id))("section_points", SECTION_POINTS_SYSTEM), user, sectionPointsSchema, 3500,
+    "section_points", "reason", piece, userId, (await promptSet(piece.company_id))("section_points", SECTION_POINTS_SYSTEM) + (parent ? `
+
+${POINTS_PARENT_NOTE}` : ""), user, sectionPointsSchema, 3500,
     async (data, cost, model) => {
       // A piece-level item the points lean on is copied into this section's research, so the fact check can see it.
       const sectionStatements = new Map(sectionItems.map((i) => [i.statement, i.id]));
@@ -841,7 +851,7 @@ async function prepareSectionPoints(userId: string, body: Record<string, unknown
       const stored = {
         titles: [...new Set(data.titles.map((t) => t.trim()).filter((t) => t && t !== section.heading))].slice(0, 4),
         points,
-        extra_sub_sections: data.extra_sub_sections.map((e) => ({ heading: e.heading.trim(), why: e.why.trim() })).filter((e) => e.heading).slice(0, 5),
+        extra_sub_sections: (parent ? [] : data.extra_sub_sections).map((e) => ({ heading: e.heading.trim(), why: e.why.trim() })).filter((e) => e.heading).slice(0, 5),
         thin: data.thin.map((t) => t.trim()).filter(Boolean).slice(0, 6),
         prepared_at: new Date().toISOString(),
       };
@@ -898,6 +908,14 @@ The section's own heading (H2) is added separately: never write one, and never u
 - #### (H4) for a smaller part inside an H3, only when that part needs its own label.
 A short opening (an "answer" block or a first paragraph) comes before the first heading and has none. A section with only one or two small parts needs no headings. Headings are short noun phrases or plain statements, never "Introduction", "Overview" or "Conclusion", and never a question (a question belongs in an faq block, in bold).`;
 
+/** Replaces the headings note for a main heading (H2) that has sub-headings: they are written as their own sections. */
+export const DRAFT_PARENT_NOTE = `MAIN HEADING WITH SUB-HEADINGS
+The sub-headings listed in <section> are written separately, each from its own points. Write only the opening of this main heading: one to three short paragraphs, about 60 to 150 words, that frame what the reader will find under it and say what matters most. Do not cover, summarise or preview the sub-headings' content in detail. Use no headings at all: no "#", "##", "###" or "####". Its own heading is added separately. This limit wins over any planned structure or talking points.`;
+
+/** Added to the points prompt for a main heading (H2) that has sub-headings, in place of the usual number of points. */
+export const POINTS_PARENT_NOTE = `MAIN HEADING WITH SUB-HEADINGS
+This section's sub-headings (listed in <section>) are prepared separately, each with its own points. Work out only the points for the opening of this main heading: 2 to 4 points that frame the whole part and set up its sub-headings. Add no point that belongs to a sub-heading, and suggest no extra sub-sections. This overrides "4 to 10 points" and step 6.`;
+
 /** Replaces the headings note when the section is itself a sub-heading (H3): it never writes its own heading and never goes above H4. */
 export const DRAFT_SUBHEADING_NOTE = `SUB-HEADING SECTION
 This section is itself a sub-heading (H3) under a main heading. Its own heading is added separately: never write it, and never use "#", "##" or "###". Use #### (H4) only for a smaller part inside it that needs its own label; a planned block of the kind subheading is written as ####. A short opening comes first, with no heading.`;
@@ -940,9 +958,10 @@ async function prepareDraft(userId: string, body: Record<string, unknown>): Prom
       : ["outline", "section_items", "core_voice", "format_profile", "voice_memory"], section);
   const { points: hasPoints, guide } = await sectionGuide(piece, section);
   const points = hasPoints ? [true] : null;
+  const parent = await hasSubHeadings(piece, section);
   const user = `${context}\n\n${guide}`;
-  const draftSystem = (await promptSet(piece.company_id))("draft", DRAFT_SYSTEM) + `\n\n${section.level === 3 ? DRAFT_SUBHEADING_NOTE : DRAFT_HEADINGS_NOTE}\n\n${DRAFT_LINKS_NOTE}` + (points ? `\n\n${DRAFT_POINTS_NOTE}` : "");
-  return task<{ text: string }>("section_draft", "write", piece, userId, draftSystem, user, obj({ text: str }), points ? 3500 : 2500,
+  const draftSystem = (await promptSet(piece.company_id))("draft", DRAFT_SYSTEM) + `\n\n${section.level === 3 ? DRAFT_SUBHEADING_NOTE : parent ? DRAFT_PARENT_NOTE : DRAFT_HEADINGS_NOTE}\n\n${DRAFT_LINKS_NOTE}` + (points ? `\n\n${DRAFT_POINTS_NOTE}` : "");
+  return task<{ text: string }>("section_draft", "write", piece, userId, draftSystem, user, obj({ text: str }), parent ? 1500 : points ? 3500 : 2500,
     async (data, cost, model) => {
       const patch: Record<string, unknown> = { ai_draft: data.text };
       if (!section.content.trim()) patch.content = data.text;

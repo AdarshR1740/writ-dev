@@ -4,6 +4,7 @@
 import { admin } from "./supabase.ts";
 import { UserError } from "./cors.ts";
 import { OUTLINE_LEGEND, outlinePrefix } from "./assemble.ts";
+import { familyNote, sectionFamily, type FamilyRow } from "./outline.ts";
 
 export type Block =
   | "brief"
@@ -223,12 +224,17 @@ Audience notes: ${piece.audience_notes || "(none)"}${
   if (section) {
     const { data: c } = await admin.from("piece_contracts").select("expectations").eq("piece_id", piece.id).single();
     const owed = ((c?.expectations ?? []) as { id: string; text: string }[]).filter((e) => section.expectation_ids.includes(e.id));
+    // Where the section sits: a main heading with sub-headings (it writes only its opening) or one of those sub-headings.
+    const { data: rows } = await sectionTexts<FamilyRow>(piece.id, "position, heading, purpose");
+    const kin = sectionFamily(rows ?? [], section.position);
+    const family = familyNote(kin);
     parts.push(`<section>
 Heading: ${section.heading}
 Purpose: ${section.purpose || "(not given)"}
 Contract expectations this section owes:
 ${owed.map((e) => `- ${e.text}`).join("\n") || "(none assigned)"}${
-      section.structure?.length ? `\nPlanned structure, in order:\n${section.structure.map((b) => `- ${b.type}: ${b.note}`).join("\n")}` : ""}
+      section.structure?.length && !kin.children.length ? `\nPlanned structure, in order:\n${section.structure.map((b) => `- ${b.type}: ${b.note}`).join("\n")}` : ""}${
+      family ? `\n${family}` : ""}
 </section>`);
   }
   return parts.join("\n\n");

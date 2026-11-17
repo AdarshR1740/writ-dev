@@ -8,6 +8,14 @@ import { headingLine } from "../lib/assemble";
 /** A section the "prepare" run hasn't done yet (the old manual research and brief steps are still reachable for it). */
 export const isUnprepared = (s: Section) => s.status === "research" || s.status === "brief";
 
+/** A main heading (H2) followed by sub-headings (H3): those are prepared and written as their own sections. */
+export function hasSubHeadings(sections: Section[], s: Section): boolean {
+  if (s.level === 3) return false;
+  const ordered = [...sections].sort((a, b) => a.position - b.position);
+  const next = ordered[ordered.findIndex((x) => x.id === s.id) + 1];
+  return !!next && next.level === 3;
+}
+
 /** The talking points for a section, in the order to make them. `number` turns a source id into its [n] in the research list. */
 export function PointsList({ points, number }: { points: SectionPoints; number?: (id: string) => number }) {
   return (
@@ -114,12 +122,15 @@ export function PreparePanel({ pieceId, sections, manual, onRunningChange, onPro
         const now = latest.current.sections.find((x) => x.id === s.id);
         if (!now || !isUnprepared(now) || latest.current.manual.has(s.id)) continue;
         at = s.id;
-        setCurrent({ id: s.id, step: "Searching the web for this section…" });
-        try {
-          await callFunction("research", { action: "search", section_id: s.id, auto: true });
-        } catch (e) {
-          // No web search (for example a provider without it): carry on with the research the piece already has.
-          setNoSearch((list) => [...list, `${s.heading}: ${errorMessage(e)}`]);
+        // A main heading with sub-headings writes only its opening: its sub-headings each get their own search.
+        if (!hasSubHeadings(latest.current.sections, s)) {
+          setCurrent({ id: s.id, step: "Searching the web for this section…" });
+          try {
+            await callFunction("research", { action: "search", section_id: s.id, auto: true });
+          } catch (e) {
+            // No web search (for example a provider without it): carry on with the research the piece already has.
+            setNoSearch((list) => [...list, `${s.heading}: ${errorMessage(e)}`]);
+          }
         }
         setCurrent({ id: s.id, step: "Working out the talking points…" });
         await callFunction("ai", { task: "section_points", section_id: s.id });
