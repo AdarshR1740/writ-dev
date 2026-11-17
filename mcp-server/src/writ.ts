@@ -654,10 +654,13 @@ const LOCK_WORDS: Record<LockScope, string> = {
 };
 
 /** The message Claude gets when the writer (or another Claude) holds the lock. It says what happened and what to do. */
-export function lockedMessage(r: { holder_label: string; since: string }, scope: LockScope): string {
+export function lockedMessage(r: { holder_label: string; since: string; expires_at?: string }, scope: LockScope): string {
   const t = new Date(r.since);
   const at = Number.isNaN(t.getTime()) ? "" : ` (since ${t.toISOString().slice(11, 16)} UTC)`;
-  return `${r.holder_label} is editing ${LOCK_WORDS[scope]} in Writ${at}. Nothing was saved. Tell the writer, and ask them to finish or to take over from the banner in Writ; then try again. Do not retry in a loop.`;
+  // A lock frees itself shortly after its holder stops: say when, so the writer is told how long to wait, not to guess.
+  const e = new Date(r.expires_at ?? "");
+  const frees = Number.isNaN(e.getTime()) ? "" : ` If they stop editing, it frees itself around ${e.toISOString().slice(11, 16)} UTC.`;
+  return `${r.holder_label} is editing ${LOCK_WORDS[scope]} in Writ${at}. Nothing was saved.${frees} Tell the writer, and ask them to finish or to take over from the banner in Writ; then try again. Do not retry in a loop.`;
 }
 
 /** How long Claude keeps a lock after its last write on that step. */

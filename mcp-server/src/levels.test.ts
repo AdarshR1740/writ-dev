@@ -303,6 +303,9 @@ describe("edit locks on Claude's writes", () => {
     expect(ran).toBe(false);
     expect(calls.map((c) => c.fn)).toEqual(["acquire_lock"]);
     expect(lockedMessage({ holder_label: "X", since: "bad" }, "outline")).toMatch(/^X is editing the outline in Writ\. Nothing was saved\./);
+    // It says when the lock frees itself, so Claude can tell the writer how long to wait.
+    expect(lockedMessage({ holder_label: "X", since: "2026-11-17T12:04:00Z", expires_at: "2026-11-17T12:07:00Z" }, "scope"))
+      .toMatch(/^X is editing the scope in Writ \(since 12:04 UTC\)\. Nothing was saved\. If they stop editing, it frees itself around 12:07 UTC\. Tell the writer/);
   });
 
   it("passes a failed write's error through", async () => {
