@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { RichEditor } from "./RichEditor";
 import { MemoryPanel } from "./MemoryPanel";
 import { MarkdownView } from "./Links";
 import { ExportPanel } from "./ExportPanel";
 import { errorMessage, supabase } from "../lib/supabase";
+import { countWords } from "../lib/wordCount";
 import { must, useLoad } from "../lib/useLoad";
 import { formatDate, plural } from "../lib/format";
 import { useCompany } from "../lib/session";
@@ -72,6 +74,13 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
   const lock = useEditLock(piece.id, "final", null, piece.stage !== "done");
   const lockedOut = lock.other !== null;
   const finalBusyMessage = "Someone else is working on the final checks and sign-off. Take over from the banner to continue.";
+  // The text as it is on screen now (edited, maybe not saved yet), by section; and how to save each section's pending edit.
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  // The final check that was current when the text was last saved from this page.
+  const [editedFor, setEditedFor] = useState<string | null>(null);
+  const flushers = useRef(new Map<string, () => Promise<void>>());
+  const setEdit = (id: string, text: string) => setEdits((e) => (e[id] === text ? e : { ...e, [id]: text }));
+  const register = (id: string, flush: (() => Promise<void>) | null) => { if (flush) flushers.current.set(id, flush); else flushers.current.delete(id); };
 
   if (error) return <ErrorText>{error}</ErrorText>;
   if (!data) return <Loading />;
@@ -86,10 +95,15 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
   const needsApproval = recipe.checks.customer_approval && !piece.customer_approval;
   // A single section headed like the piece itself doesn't repeat the title.
   const shown = data.sections.map((s) => ({
+    id: s.id,
     heading: data.sections.length === 1 && s.heading.trim().toLowerCase() === piece.title.trim().toLowerCase() ? "" : s.heading,
-    content: s.content.trim(),
+    content: (edits[s.id] ?? s.content).trim(),
     level: s.level,
   }));
+  // Text changed after the final check ran (saved from this page since that check, or typed and not saved yet): that check no
+  // longer describes the piece. Running the check again clears it.
+  const unsavedEdit = data.sections.some((s) => (edits[s.id] ?? s.content).trim() !== s.content.trim());
+  const editedAfterCheck = contractCheck && piece.final_check !== null && (editedFor === piece.final_check.checked_at || unsavedEdit);
   const draft = shown.map((s) => (s.heading ? `${headingLine(s)}\n\n${s.content}` : s.content)).join("\n\n");
 
   async function exportAudit() {
@@ -127,19 +141,22 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
         <section className="doc-surface" aria-label="Full draft">
           <header>
             <strong>The piece</strong>
-            <span className="small faint">{plural(draft.split(/\s+/).filter(Boolean).length, "word")}</span>
+            <span className="small faint">{plural(countWords(draft), "word")}</span>
             <span className="spacer" />
             <CopyButton text={`# ${piece.title}\n\n${draft}`} label="Copy as Markdown" />
           </header>
           <article className="doc-render formatted">
             <h1>{piece.title}</h1>
             {shown.map((sec, i) => (
-              <section key={i}>
+              <section key={sec.id}>
                 {sec.heading && <h2>{sec.heading}</h2>}
-                <Prose text={sec.content} />
+                {done
+                  ? <Prose text={sec.content} />
+                  : <SectionEditor pieceId={piece.id} section={data.sections[i]} onText={setEdit} onSaved={() => { setEditedFor(piece.final_check?.checked_at ?? null); void reload(); }} register={register} />}
               </section>
             ))}
           </article>
+          {!done && <p className="small faint" style={{ padding: "0 20px 14px" }}>You can still edit the text here. It is locked once the piece is signed off.</p>}
         </section>
 
         {contractCheck && <section className="card stack">
@@ -201,10 +218,14 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
               )}
               <ErrorText>{actionError}</ErrorText>
               {needsEditor && <p className="small faint">Only an editor can sign off.</p>}
-              <button type="button" className="btn btn-primary" disabled={busy || lockedOut || needsEditor || unwritten.length > 0 || (contractCheck && !piece.final_check) || needsApproval} onClick={async () => {
+              <button type="button" className="btn btn-primary" disabled={busy || lockedOut || needsEditor || unwritten.length > 0 || (contractCheck && !piece.final_check) || editedAfterCheck || needsApproval} onClick={async () => {
                 setBusy(true);
                 setActionError(null);
                 if (!(await lock.ensure())) { setBusy(false); setActionError(finalBusyMessage); return; }
+                // Text typed a moment ago is saved before the piece is approved.
+                try {
+                  for (const flush of flushers.current.values()) await flush();
+                } catch (e) { setBusy(false); setActionError(errorMessage(e)); return; }
                 const { error: err } = await supabase.rpc("sign_off", { target_piece: piece.id, final_version: finalText.trim() || null });
                 setBusy(false);
                 if (err) setActionError(err.message);
@@ -212,9 +233,10 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
               }}>
                 {formalSignOff ? `Sign off as ${company.role === "editor" ? "editor" : "approver"}` : "Mark done"}
               </button>
-              {!needsEditor && (unwritten.length > 0 || (contractCheck && !piece.final_check) || needsApproval) && (
+              {!needsEditor && (unwritten.length > 0 || (contractCheck && !piece.final_check) || editedAfterCheck || needsApproval) && (
                 <span className="small muted disabled-reason">
-                  {unwritten.length > 0 ? "Write every section first" : contractCheck && !piece.final_check ? "Run the final check first" : "Record the customer's approval first"}
+                  {unwritten.length > 0 ? "Write every section first" : contractCheck && !piece.final_check ? "Run the final check first"
+                    : editedAfterCheck ? "The text changed after the final check. Check again first" : "Record the customer's approval first"}
                 </span>
               )}
             </>
@@ -244,6 +266,93 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
           <button type="button" className="btn btn-small" onClick={exportAudit}>Export audit trail</button>
         </div>
       </aside>
+    </div>
+  );
+}
+
+/**
+ * One section's text on the sign-off page, edited in place with the same editor, autosave, section lock and "someone else saved
+ * a different version" check as the Writing page. `register` hands the parent a way to save a pending edit before sign-off.
+ */
+function SectionEditor({ pieceId, section, onText, onSaved, register }: {
+  pieceId: string;
+  section: Section;
+  onText: (id: string, text: string) => void;
+  onSaved: () => void;
+  register: (id: string, flush: (() => Promise<void>) | null) => void;
+}) {
+  const [text, setText] = useState(section.content);
+  const [savedText, setSavedText] = useState(section.content);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<string | null>(null);
+  const lock = useEditLock(pieceId, "section", section.id, true);
+  const timer = useRef<number | null>(null);
+  const latest = useRef({ text, savedText, conflict });
+  latest.current = { text, savedText, conflict };
+
+  // Someone else saved while this copy was untouched (the page reloads after each save): show what is saved.
+  useEffect(() => {
+    if (text === savedText && conflict === null && section.content !== savedText) { setText(section.content); setSavedText(section.content); }
+  }, [section.content]);
+
+  useEffect(() => onText(section.id, text), [text]);
+  useEffect(() => { if (text !== savedText) void lock.ensure(); }, [text]);
+
+  async function save(): Promise<void> {
+    const { text: value, savedText: from } = latest.current;
+    if (value === from) return;
+    if (!(await lock.ensure())) throw new Error("Someone else is editing this section. Take over from the banner to save your changes.");
+    const { data: row } = await supabase.from("piece_sections").select("content").eq("id", section.id).single();
+    if (row && (row.content as string) !== from) {
+      setConflict(row.content as string);
+      throw new Error("This section changed while you were editing. Choose which version to keep above the text.");
+    }
+    must(await supabase.from("piece_sections").update({ content: value }).eq("id", section.id).select("id"));
+    setSavedText(value);
+    onSaved();
+  }
+
+  // Autosave a moment after typing stops.
+  useEffect(() => {
+    if (text === savedText || lock.other || conflict !== null) return;
+    timer.current = window.setTimeout(async () => {
+      setSaving(true);
+      setError(null);
+      try { await save(); } catch (e) { setError(errorMessage(e)); } finally { setSaving(false); }
+    }, 900);
+    return () => { if (timer.current) window.clearTimeout(timer.current); };
+  }, [text, savedText, lock.other, conflict]);
+
+  // The parent saves any pending edit before it signs the piece off. It calls the latest `save`, not the first render's.
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    register(section.id, async () => {
+      if (timer.current) window.clearTimeout(timer.current);
+      if (latest.current.conflict !== null) throw new Error("This section changed while you were editing. Choose which version to keep above the text.");
+      await saveRef.current();
+    });
+    return () => register(section.id, null);
+  }, [section.id]);
+
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      {conflict !== null && (
+        <div className="notice row" role="alert" style={{ alignItems: "center", flexWrap: "wrap" }}>
+          <span className="small"><strong>This section changed while you were editing.</strong> Someone else saved a different version. Your latest edits are not saved yet.</span>
+          <span className="spacer" />
+          <button type="button" className="btn btn-small" onClick={() => { setText(conflict); setSavedText(conflict); setConflict(null); onSaved(); }}>Use the saved version</button>
+          <button type="button" className="btn btn-quiet btn-small" onClick={() => { setSavedText(conflict); setConflict(null); }}>Keep my version</button>
+        </div>
+      )}
+      {lock.other && (
+        <LockBanner holder={lock.other} what="this section" unsaved={text !== savedText} problem={lock.problem} onTakeOver={() => void lock.takeOver()} />
+      )}
+      <RichEditor value={text} onChange={setText} readOnly={lock.other !== null} label={`Text of ${section.heading || "the piece"}`}
+        placeholder="This section has no text yet." />
+      <span className="small faint">{countWords(text)} words · {saving ? "saving…" : text !== savedText ? "unsaved" : "saved"}</span>
+      <ErrorText>{error}</ErrorText>
     </div>
   );
 }

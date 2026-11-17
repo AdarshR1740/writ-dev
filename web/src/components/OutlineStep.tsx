@@ -494,10 +494,9 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                 });
               }}>Reopen outline</button>
             )}
-            {!confirmed && (
-              <ClearButton what="the outline" label="Clear outline"
+            <ClearButton what="the outline" label="Clear outline"
                 consequence={`Every section and sub-heading is removed.${data.sections.some((s) => s.content.trim()) ? " Text already written in those sections is deleted with them." : ""} The scope and the research stay.`}
-                disabledReason={lock.other ? "Someone else is editing the outline" : busy || saveState === "saving" ? "Wait for the save to finish"
+                disabledReason={confirmed ? "Reopen the outline to clear it" : lock.other ? "Someone else is editing the outline" : busy || saveState === "saving" ? "Wait for the save to finish"
                   : draft.length === 0 && data.sections.length === 0 ? "The outline is already empty" : null}
                 onConfirm={async () => {
                   await save([]);
@@ -507,7 +506,6 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                   setSeoOpen(false);
                   onChanged();
                 }} />
-            )}
             {!locked && (saveState === "error" && dirty
               ? <span className="small" style={{ color: "var(--flag, #b3261e)" }}>Couldn't save. Your edits are kept here; change something to try again.</span>
               : (dirty || saveState === "saving") && <span className="small faint">Saving…</span>)}

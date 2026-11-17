@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { callFunction, errorMessage } from "../lib/supabase";
+import { countWords } from "../lib/wordCount";
 import { CopyButton } from "./ui";
 import { MarkdownView } from "./Links";
 import type { Section, SectionPoints } from "../lib/types";
@@ -347,8 +348,8 @@ export function AiWritePanel({ sections, onRunningChange, onProgress, onFinished
 /** The whole draft as one document, with a way into each section to edit it. */
 export function FullDraft({ title, sections, onOpen }: { title: string; sections: Section[]; onOpen: (id: string) => void }) {
   const text = [`# ${title}`, ...sections.map((s) => `${headingLine(s)}\n\n${s.content.trim() || "(not written yet)"}`)].join("\n\n");
-  const words = sections.reduce((n, s) => n + (s.content.trim() ? s.content.trim().split(/\s+/).length : 0), 0);
-  const written = sections.filter((s) => s.content.trim()).length;
+  const words = sections.reduce((n, s) => n + countWords(s.content), 0);
+  const written = sections.filter((s) => countWords(s.content) > 0).length;
   return (
     <div className="stack-lg">
       <div className="row" style={{ alignItems: "center" }}>

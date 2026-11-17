@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { formatCost } from "../lib/format";
+import { countWords } from "../lib/wordCount";
 import { useShowCosts } from "../lib/showCosts";
 import { BLOCK_LABELS, type BriefBullet, type CheckResult, type Contract, type FactFlag, type Piece, type ResearchItem, type Section } from "../lib/types";
 import { ResearchStep } from "./ResearchStep";
@@ -430,12 +431,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
     }
   }
 
-  // Words of text, not of Markdown: link addresses and the marks around headings, lists and emphasis are left out.
-  const plain = text
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/^\s*(#{1,6}|[-*]|\d+[.)])\s+/gm, "")
-    .replace(/\*\*?|\\|\|/g, " ");
-  const words = plain.trim() ? plain.trim().split(/\s+/).length : 0;
+  const words = countWords(text);
   const unsaved = text !== savedText;
 
   async function saveHeading() {
