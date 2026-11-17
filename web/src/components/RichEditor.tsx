@@ -18,6 +18,13 @@ export interface RichEditorHandle {
   part: () => { title: string; markdown: string } | null;
 }
 
+/** A toolbar icon. Defined here, not inside the editor, so React doesn't remount it on every render. */
+function Icon({ children }: { children: React.ReactNode }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block", margin: "0 auto" }}>{children}</svg>
+  );
+}
+
 export function RichEditor({ value, onChange, readOnly = false, placeholder, label, handleRef }: {
   /** The section's text, as Markdown. */
   value: string;
@@ -137,11 +144,11 @@ export function RichEditor({ value, onChange, readOnly = false, placeholder, lab
           {tool(state?.bold ?? false, "Bold (Ctrl+B)", () => chain().toggleBold().run(), <strong>B</strong>)}
           {tool(state?.italic ?? false, "Italic (Ctrl+I)", () => chain().toggleItalic().run(), <em>I</em>)}
           <span className="rich-sep" aria-hidden="true" />
-          {tool(state?.bullets ?? false, "Bulleted list", () => chain().toggleBulletList().run(), "• List")}
-          {tool(state?.numbers ?? false, "Numbered list", () => chain().toggleOrderedList().run(), "1. List")}
+          {tool(state?.bullets ?? false, "Bulleted list", () => chain().toggleBulletList().run(), <Icon><circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none"/><path d="M9 6h11M9 12h11M9 18h11"/></Icon>)}
+          {tool(state?.numbers ?? false, "Numbered list", () => chain().toggleOrderedList().run(), <Icon><path d="M10 6h10M10 12h10M10 18h10"/><path d="M3.5 5l1.5-1v4M3.5 11.5c0-1.2 2.2-1.2 2.2 0 0 .9-2.2 1.6-2.2 2.5h2.4M3.5 16.5h2.2l-1 1.3c.8 0 1.2.5 1.2 1.1 0 .8-.8 1.1-2.4.9" strokeWidth="1.2"/></Icon>)}
           <span className="rich-sep" aria-hidden="true" />
-          {tool(state?.link ?? false, "Link", openLinkBox, "Link")}
-          {tool(state?.table ?? false, "Insert a table", () => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(), "Table", state?.table ?? false)}
+          {tool(state?.link ?? false, "Link", openLinkBox, <Icon><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></Icon>)}
+          {tool(state?.table ?? false, "Insert a table", () => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(), <Icon><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/></Icon>, state?.table ?? false)}
           <span className="rich-sep" aria-hidden="true" />
           {tool(false, "Undo (Ctrl+Z)", () => chain().undo().run(), "↶", !(state?.canUndo ?? false))}
           {tool(false, "Redo (Ctrl+Y)", () => chain().redo().run(), "↷", !(state?.canRedo ?? false))}

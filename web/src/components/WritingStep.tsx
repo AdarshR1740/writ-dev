@@ -100,6 +100,11 @@ export function WritingStep({ piece, onChanged, onContinue, onBusyChange, finish
   return (
     <div className={`writing${sections.length === 1 && recipe.outline.mode === "off" ? " single" : ""}`}>
       <nav className="section-nav" aria-label="Sections">
+        {sections.length > 1 && (
+          <p className="small faint section-progress" aria-live="polite">
+            {sections.filter((s) => s.status === "written").length} of {sections.length} written
+          </p>
+        )}
         {sections.some((s) => s.points) && (
           <button type="button" className={`section-link${showAll ? " active" : ""}`} disabled={busyRun} onClick={() => setSelected("all")}>
             <span className="dot" />
@@ -231,8 +236,8 @@ function SectionWork({ piece, section, contract, recipe, blockedResearch, blocke
   const owed = contract.expectations.filter((e) => section.expectation_ids.includes(e.id));
   return (
     <>
-      <div className="page-head">
-        <span className="eyebrow">Section {section.position}</span>
+      <div className="gate page-head">
+        <span className="eyebrow">Section {section.position} of {allSections.length}</span>
         {/* Once the section is being written its heading is edited in the editor, so it isn't shown twice. */}
         {section.status !== "writing" && section.status !== "written" && <h2>{section.heading}</h2>}
         {section.purpose && <p className="muted">{section.purpose}</p>}
@@ -364,7 +369,22 @@ function Writer({ piece, section, recipe, onChanged, onNext, nextDisabled, allSe
   const [note, setNote] = useState<string | null>(null);
   // The talking points and sources beside the editor. Once the AI has written the section they are tucked away by default,
   // so the text has the whole width; they are one click away.
-  const [railOpen, setRailOpen] = useState(!section.ai_draft);
+  // The choice is remembered per piece (in this browser) once the writer makes it.
+  const railKey = `writ.rail.${piece.id}`;
+  const [railOpen, setRailOpenState] = useState(() => {
+    try {
+      const saved = localStorage.getItem(railKey);
+      if (saved === "open") return true;
+      if (saved === "closed") return false;
+    } catch { /* storage unavailable: use the default */ }
+    return !section.ai_draft;
+  });
+  const setRailOpen = (open: boolean) => {
+    setRailOpenState(open);
+    try { localStorage.setItem(railKey, open ? "open" : "closed"); } catch { /* not remembered */ }
+  };
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   // Revising from feedback: the panel, and the editor's handle (to read the selection or the part the cursor is in).
   const [reviseOpen, setReviseOpen] = useState(false);
   const editorRef = useRef<RichEditorHandle>(null);
@@ -489,8 +509,30 @@ function Writer({ piece, section, recipe, onChanged, onNext, nextDisabled, allSe
               </a>
             )}
             <span className="spacer" />
+            {!written && !lockedOut && recipe.writing.ai_draft && text.trim() && (
+              <button type="button" className="btn btn-small" aria-expanded={reviseOpen} onClick={() => setReviseOpen((o) => !o)}>Revise</button>
+            )}
+            {hasSide && (
+              <button type="button" className="btn btn-small" aria-expanded={railOpen} onClick={() => setRailOpen(!railOpen)}>
+                {railOpen ? "Hide points and sources" : "Show points and sources"}
+              </button>
+            )}
             {!written && (
-              <ClearButton what="this section's text" label="Clear text"
+              <span className="more-menu" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setMoreOpen(false); }}
+                onKeyDown={(e) => { if (e.key === "Escape") setMoreOpen(false); }}>
+                <button type="button" className="btn btn-quiet btn-small" aria-haspopup="menu" aria-expanded={moreOpen} aria-label="More actions" title="More actions" onClick={() => setMoreOpen((o) => !o)}>…</button>
+                {moreOpen && (
+                  <div className="more-menu-list" role="menu">
+                    <button type="button" role="menuitem" className="btn btn-quiet btn-small btn-danger" onMouseDown={(e) => e.preventDefault()}
+                      disabled={lockedOut || (!text.trim() && !section.content.trim() && !section.ai_draft)}
+                      title={lockedOut ? "Someone else is editing this section" : !text.trim() && !section.content.trim() && !section.ai_draft ? "The section is already empty" : undefined}
+                      onClick={() => { setMoreOpen(false); setClearOpen(true); }}>Clear text…</button>
+                  </div>
+                )}
+              </span>
+            )}
+            {!written && (
+              <ClearButton what="this section's text" label="Clear text" hideButton open={clearOpen} onOpenChange={setClearOpen}
                 consequence="Everything written in this section is removed, including the AI draft it started from. Its talking points and sources stay, so you can start again."
                 disabledReason={lockedOut ? "Someone else is editing this section" : !text.trim() && !section.content.trim() && !section.ai_draft ? "The section is already empty" : null}
                 onConfirm={async () => {
@@ -505,14 +547,6 @@ function Writer({ piece, section, recipe, onChanged, onNext, nextDisabled, allSe
                   setReviseOpen(false);
                   onChanged();
                 }} />
-            )}
-            {!written && !lockedOut && recipe.writing.ai_draft && text.trim() && (
-              <button type="button" className="btn btn-small" aria-expanded={reviseOpen} onClick={() => setReviseOpen((o) => !o)}>Revise</button>
-            )}
-            {hasSide && (
-              <button type="button" className="btn btn-quiet btn-small" aria-expanded={railOpen} onClick={() => setRailOpen((o) => !o)}>
-                {railOpen ? "Hide points and sources" : "Show points and sources"}
-              </button>
             )}
           </header>
           {reviseOpen && !written && (
@@ -564,6 +598,34 @@ function Writer({ piece, section, recipe, onChanged, onNext, nextDisabled, allSe
           </div>
         </section>
         <SourceLinks text={text} items={items} disabled={written || lockedOut} onChange={setText} />
+        {railOpen && hasSide && <aside className="rail brief-rail" aria-label="Talking points, brief and research">
+          {/* The prepared talking points, with their sources, so the section can be written without leaving this screen. */}
+          {section.points && <PointsList points={section.points} number={number} />}
+          {/* The brief mirrors the points when the section was prepared, so it is shown only for a hand-made one. */}
+          {!section.points && (section.brief ?? []).length > 0 && <h3>Brief</h3>}
+          {!section.points && (
+            <ul className="brief-view">
+              {(section.brief ?? []).map((b, i) => (
+                <li key={i}>
+                  <span>{b.text}</span>
+                  {b.refs.map((r) => <a key={r} href={`#ref-${r}`} className="tag">[{number(r)}]</a>)}
+                </li>
+              ))}
+            </ul>
+          )}
+          {(section.structure ?? []).length > 0 && (
+            <>
+              <h3>Planned structure</h3>
+              <ol className="brief-view">
+                {section.structure!.map((b, i) => (
+                  <li key={i}><span><strong>{BLOCK_LABELS[b.type] ?? b.type}</strong>: {b.note}</span></li>
+                ))}
+              </ol>
+            </>
+          )}
+          <h3>Approved research</h3>
+          <ItemList items={items} />
+        </aside>}
 
         <ErrorText>{error}</ErrorText>
         {note && <p className="notice small">{note}</p>}
@@ -662,35 +724,6 @@ function Writer({ piece, section, recipe, onChanged, onNext, nextDisabled, allSe
         )}
         {written && section.contract_check && <ContractResults results={section.contract_check.results} />}
       </div>
-
-      {railOpen && hasSide && <aside className="rail brief-rail" aria-label="Talking points, brief and research">
-        {/* The prepared talking points, with their sources, so the section can be written without leaving this screen. */}
-        {section.points && <PointsList points={section.points} number={number} />}
-        {/* The brief mirrors the points when the section was prepared, so it is shown only for a hand-made one. */}
-        {!section.points && (section.brief ?? []).length > 0 && <h3>Brief</h3>}
-        {!section.points && (
-          <ul className="brief-view">
-            {(section.brief ?? []).map((b, i) => (
-              <li key={i}>
-                <span>{b.text}</span>
-                {b.refs.map((r) => <a key={r} href={`#ref-${r}`} className="tag">[{number(r)}]</a>)}
-              </li>
-            ))}
-          </ul>
-        )}
-        {(section.structure ?? []).length > 0 && (
-          <>
-            <h3>Planned structure</h3>
-            <ol className="brief-view">
-              {section.structure!.map((b, i) => (
-                <li key={i}><span><strong>{BLOCK_LABELS[b.type] ?? b.type}</strong>: {b.note}</span></li>
-              ))}
-            </ol>
-          </>
-        )}
-        <h3>Approved research</h3>
-        <ItemList items={items} />
-      </aside>}
     </div>
   );
 }

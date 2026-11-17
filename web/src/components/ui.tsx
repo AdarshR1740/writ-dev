@@ -60,7 +60,12 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
  * A "Clear" button that asks first. Nothing is cleared until the writer confirms in the dialog. `onConfirm` may throw: the
  * message is shown in the dialog and it stays open. `disabledReason` greys the button and shows why as its tooltip.
  */
-export function ClearButton({ what, consequence, onConfirm, disabledReason, label = "Clear", small = true }: {
+export function ClearButton({ what, consequence, onConfirm, disabledReason, label = "Clear", small = true, open: controlledOpen, onOpenChange, hideButton = false }: {
+  /** Open the dialog from outside (for example from a menu item); pair with `hideButton`. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Render only the dialog, not the button. */
+  hideButton?: boolean;
   /** What is cleared, in a few words: "the scope", "the outline". */
   what: string;
   /** What the writer loses and what stays, one or two sentences. */
@@ -71,14 +76,16 @@ export function ClearButton({ what, consequence, onConfirm, disabledReason, labe
   label?: string;
   small?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [innerOpen, setInnerOpen] = useState(false);
+  const open = controlledOpen ?? innerOpen;
+  const setOpen = (v: boolean) => { setInnerOpen(v); onOpenChange?.(v); };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const close = () => { if (!busy) { setOpen(false); setError(null); } };
   return (
     <>
-      <button type="button" className={`btn${small ? " btn-small" : ""} btn-quiet btn-danger`} disabled={Boolean(disabledReason)}
-        title={disabledReason ?? undefined} onClick={() => setOpen(true)}>{label}</button>
+      {!hideButton && <button type="button" className={`btn${small ? " btn-small" : ""} btn-quiet btn-danger`} disabled={Boolean(disabledReason)}
+        title={disabledReason ?? undefined} onClick={() => setOpen(true)}>{label}</button>}
       {open && (
         <Modal title={`Clear ${what}?`} onClose={close}>
           <div className="stack" style={{ gap: 14 }}>
