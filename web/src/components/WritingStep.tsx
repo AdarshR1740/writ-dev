@@ -97,7 +97,27 @@ export function WritingStep({ piece, onChanged, onContinue, onBusyChange, finish
   const refresh = () => { reload(); onChanged(); };
   const nextSection = sections.filter((x) => x.position > current.position).sort((a, b) => a.position - b.position)[0];
 
+  const writtenCount = sections.filter((x) => x.status === "written").length;
+  const allWritten = writtenCount === sections.length;
+  const left = sections.length - writtenCount;
+
   return (
+    <div className="writing-wrap">
+    {onContinue && piece.stage === "writing" && (
+      <div className="writing-bar" role="region" aria-label="Finish writing">
+        <span className="small">
+          {allWritten
+            ? <><strong>Writing is complete.</strong> You can still reopen a section to edit it.</>
+            : <>{writtenCount} of {sections.length} sections written</>}
+        </span>
+        <span className="spacer" />
+        <button type="button" className="btn btn-primary btn-small" disabled={busyRun}
+          title={!allWritten ? `${left} ${left === 1 ? "section is" : "sections are"} not marked written yet. Sign-off shows what is still missing, and you can come back here.` : undefined}
+          onClick={onContinue}>
+          Send to {finishLabel.toLowerCase()} →
+        </button>
+      </div>
+    )}
     <div className={`writing${sections.length === 1 && recipe.outline.mode === "off" ? " single" : ""}`}>
       <nav className="section-nav" aria-label="Sections">
         {sections.length > 1 && (
@@ -134,16 +154,6 @@ export function WritingStep({ piece, onChanged, onContinue, onBusyChange, finish
         ))}
       </nav>
       <div className="stack-lg" style={{ minWidth: 0 }}>
-        {sections.every((s) => s.status === "written") && piece.stage === "writing" && (
-          <div className="notice ok-notice row" role="status">
-            <span>
-              <strong>Writing is complete.</strong>{" "}
-              {sections.length === 1 ? "The text is written." : `All ${sections.length} sections are written.`} You can still reopen a section to edit it.
-            </span>
-            <span className="spacer" />
-            {onContinue && <button type="button" className="btn btn-primary btn-small" onClick={onContinue}>Continue to {finishLabel.toLowerCase()}</button>}
-          </div>
-        )}
         {aiWriting ? (
           <AiWritePanel
             sections={sections}
@@ -210,17 +220,46 @@ export function WritingStep({ piece, onChanged, onContinue, onBusyChange, finish
               blockedBrief={blockedBrief}
               onChanged={refresh}
               onNext={nextSection ? () => setSelected(nextSection.id) : undefined}
+              onDeleted={() => {
+                const others = sections.filter((x) => x.id !== current.id && !subHeadingsOf(sections, current).some((c) => c.id === x.id));
+                const before = others.filter((x) => x.position < current.position).pop();
+                setSelected((before ?? others[0])?.id ?? null);
+              }}
               nextDisabled={busyRun}
+              busyRun={busyRun}
               allSections={sections}
             />
           </>
         )}
       </div>
     </div>
+    </div>
   );
 }
 
-function SectionWork({ piece, section, contract, recipe, blockedResearch, blockedBrief, onChanged, onNext, nextDisabled, allSections }: {
+/** The sub-headings that go with a main heading when it is deleted (none for a sub-heading). */
+function subHeadingsOf(all: Section[], s: Section): Section[] {
+  const sorted = [...all].sort((a, b) => a.position - b.position);
+  const at = sorted.findIndex((x) => x.id === s.id);
+  const subs: Section[] = [];
+  if (s.level === 2) {
+    for (let i = at + 1; i < sorted.length && sorted[i].level === 3; i++) subs.push(sorted[i]);
+  }
+  return subs;
+}
+
+/** Deleting this section (with its sub-headings) would leave the piece with nothing. */
+const coversAll = (all: Section[], s: Section) => 1 + subHeadingsOf(all, s).length >= all.length;
+
+/** What deleting a section removes, in words, for the confirmation. */
+function removedWith(all: Section[], s: Section): string {
+  const subs = subHeadingsOf(all, s);
+  const words = [s, ...subs].reduce((n, x) => n + countWords(x.content), 0);
+  const what = subs.length > 0 ? `"${s.heading}" and its ${subs.length} ${subs.length === 1 ? "sub-heading" : "sub-headings"}` : `"${s.heading}"`;
+  return `${what} will be removed from the piece, with ${words} ${words === 1 ? "word" : "words"} of text, its talking points and its research. The other sections stay and are renumbered. To get a section back you would have to add it again in the outline.`;
+}
+
+function SectionWork({ piece, section, contract, recipe, blockedResearch, blockedBrief, onChanged, onNext, onDeleted, nextDisabled, allSections, busyRun }: {
   piece: Piece;
   section: Section;
   contract: Contract;
@@ -230,14 +269,32 @@ function SectionWork({ piece, section, contract, recipe, blockedResearch, blocke
   onChanged: () => void;
   /** Opens the next section, when there is one. */
   onNext?: () => void;
+  /** Called after this section has been deleted, so the page can pick another one. */
+  onDeleted: () => void;
   nextDisabled?: boolean;
   allSections: Section[];
+  /** A prepare or AI-write run is going: nothing may be removed under it. */
+  busyRun: boolean;
 }) {
   const owed = contract.expectations.filter((e) => section.expectation_ids.includes(e.id));
   return (
     <>
       <div className="gate page-head">
-        <span className="eyebrow">Section {section.position} of {allSections.length}</span>
+        <div className="row" style={{ alignItems: "center" }}>
+          <span className="eyebrow">Section {section.position} of {allSections.length}</span>
+          <span className="spacer" />
+          {piece.stage !== "done" && (
+            <ClearButton what="this section" label="Delete section" verb="Delete" busyText="Deleting…"
+              disabledReason={busyRun ? "Wait for the AI run to finish" : coversAll(allSections, section) ? "A piece needs at least one section" : null}
+              consequence={removedWith(allSections, section)}
+              onConfirm={async () => {
+                const { error: err } = await supabase.rpc("delete_section", { target_section: section.id });
+                if (err) throw new Error(/edit_locked/.test(err.message) ? err.message.replace(/^.*edit_locked:\s*/, "") : err.message);
+                onDeleted();
+                onChanged();
+              }} />
+          )}
+        </div>
         {/* Once the section is being written its heading is edited in the editor, so it isn't shown twice. */}
         {section.status !== "writing" && section.status !== "written" && <h2>{section.heading}</h2>}
         {section.purpose && <p className="muted">{section.purpose}</p>}

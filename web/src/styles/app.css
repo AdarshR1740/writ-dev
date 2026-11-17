@@ -1289,3 +1289,12 @@ ol.points-list p { margin: 0; }
 /* The writing workbench: stack the points rail under the editor (the page is only 1080px wide, beside the section list), so the editor never gets squeezed. */
 .workbench:not(.no-rail):has(.writer-bar) { grid-template-columns: minmax(0, 1fr); }
 .doc-surface header .more-menu > .btn { min-width: 32px; border: 1px solid var(--rule-strong); }
+
+/* A bar pinned to the top of the Writing page: progress and the way on to sign-off. */
+.writing-wrap { display: grid; gap: 16px; }
+.writing-bar {
+  position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+  background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--pencil); border-radius: 0 8px 8px 0;
+}
+.writing-wrap .rich-toolbar { top: 56px; }
+.writing-wrap .section-nav { top: 72px; }

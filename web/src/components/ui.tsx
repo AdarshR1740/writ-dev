@@ -60,7 +60,10 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
  * A "Clear" button that asks first. Nothing is cleared until the writer confirms in the dialog. `onConfirm` may throw: the
  * message is shown in the dialog and it stays open. `disabledReason` greys the button and shows why as its tooltip.
  */
-export function ClearButton({ what, consequence, onConfirm, disabledReason, label = "Clear", small = true, open: controlledOpen, onOpenChange, hideButton = false }: {
+export function ClearButton({ what, consequence, onConfirm, disabledReason, label = "Clear", small = true, verb = "Clear", busyText = "Clearing…", open: controlledOpen, onOpenChange, hideButton = false }: {
+  /** The action word in the dialog ("Clear" by default, "Delete" for removing something). */
+  verb?: string;
+  busyText?: string;
   /** Open the dialog from outside (for example from a menu item); pair with `hideButton`. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -87,7 +90,7 @@ export function ClearButton({ what, consequence, onConfirm, disabledReason, labe
       {!hideButton && <button type="button" className={`btn${small ? " btn-small" : ""} btn-quiet btn-danger`} disabled={Boolean(disabledReason)}
         title={disabledReason ?? undefined} onClick={() => setOpen(true)}>{label}</button>}
       {open && (
-        <Modal title={`Clear ${what}?`} onClose={close}>
+        <Modal title={`${verb} ${what}?`} onClose={close}>
           <div className="stack" style={{ gap: 14 }}>
             <p>{consequence}</p>
             <p className="small muted">This can't be undone.</p>
@@ -105,7 +108,7 @@ export function ClearButton({ what, consequence, onConfirm, disabledReason, labe
                 } finally {
                   setBusy(false);
                 }
-              }}>{busy ? "Clearing…" : `Clear ${what}`}</button>
+              }}>{busy ? busyText : `${verb} ${what}`}</button>
             </div>
           </div>
         </Modal>
