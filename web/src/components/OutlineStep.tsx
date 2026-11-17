@@ -5,7 +5,7 @@ import { useShowCosts } from "../lib/showCosts";
 import { must, useLoad } from "../lib/useLoad";
 import { BLOCK_LABELS, type Analysis, type Block, type Contract, type FixProposal, type Piece, type ResearchItem, type Section, type ThreadMessage } from "../lib/types";
 import { CardForm, emptyCard } from "./CardForm";
-import { AiAction, CleanTextarea, ErrorText, Loading, Modal } from "./ui";
+import { AiAction, CleanTextarea, ClearButton, ErrorText, Loading, Modal } from "./ui";
 import { cardDetail } from "../lib/cards";
 import { SeoGeoPanel, type OutlineFix, type SeoGeoResult } from "./SeoGeoPanel";
 import { BlockTypePicker } from "./BlockTypePicker";
@@ -493,6 +493,20 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                   onChanged();
                 });
               }}>Reopen outline</button>
+            )}
+            {!confirmed && (
+              <ClearButton what="the outline" label="Clear outline"
+                consequence={`Every section and sub-heading is removed.${data.sections.some((s) => s.content.trim()) ? " Text already written in those sections is deleted with them." : ""} The scope and the research stay.`}
+                disabledReason={lock.other ? "Someone else is editing the outline" : busy || saveState === "saving" ? "Wait for the save to finish"
+                  : draft.length === 0 && data.sections.length === 0 ? "The outline is already empty" : null}
+                onConfirm={async () => {
+                  await save([]);
+                  setDraft([]);
+                  setUndo(null);
+                  setFixReply(null);
+                  setSeoOpen(false);
+                  onChanged();
+                }} />
             )}
             {!locked && (saveState === "error" && dirty
               ? <span className="small" style={{ color: "var(--flag, #b3261e)" }}>Couldn't save. Your edits are kept here; change something to try again.</span>

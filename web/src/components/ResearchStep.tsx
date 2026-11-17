@@ -11,7 +11,7 @@ import {
   type ResearchItem,
   type Source,
 } from "../lib/types";
-import { AiAction, ErrorText, Loading, Tabs, CleanTextarea } from "./ui";
+import { AiAction, ClearButton, ErrorText, Loading, Tabs, CleanTextarea } from "./ui";
 import { normalise } from "../lib/recipes";
 import { cardDetail } from "../lib/cards";
 import { MAX_LINKS, parseLinks } from "../lib/links";
@@ -217,6 +217,24 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
               }, false)}>
               {counts.approved === 0 ? "Continue without research" : "Finish research"}
             </button>
+          )}
+          {!locked && (
+            <ClearButton what={section ? "this section's research" : "the research"} label="Clear research"
+              consequence={`Every research item${section ? " for this section" : ""} is removed, approved or not. Your library of saved sources stays.`}
+              disabledReason={busy ? "Wait for the current action to finish" : data.items.length === 0 ? "There is no research to clear" : null}
+              onConfirm={async () => {
+                if (!(await lock.ensure())) throw new Error(researchBusyMessage);
+                const { error: err } = await supabase.rpc("clear_research", { target_piece: piece.id, target_section: section?.id ?? null });
+                if (err) {
+                  // The research may have been finished (here or elsewhere) while the dialog was open.
+                  if (/finished; reopen it first/.test(err.message)) {
+                    throw new Error(`${section ? "This section's research" : "The research"} was finished while this window was open, so it can't be cleared now. Close this window, press Reopen research, then clear it.`);
+                  }
+                  throw err;
+                }
+                setNote(null);
+                await reload();
+              }} />
           )}
           {locked && <span className="tag ok">Locked</span>}
           {locked && (section ? section.status === "brief" : piece.stage !== "contract" && piece.stage !== "done") && (

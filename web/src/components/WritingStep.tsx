@@ -5,7 +5,7 @@ import { formatCost } from "../lib/format";
 import { useShowCosts } from "../lib/showCosts";
 import { BLOCK_LABELS, type BriefBullet, type CheckResult, type Contract, type FactFlag, type Piece, type ResearchItem, type Section } from "../lib/types";
 import { ResearchStep } from "./ResearchStep";
-import { AiAction, CopyButton, ErrorText, Loading } from "./ui";
+import { AiAction, ClearButton, CopyButton, ErrorText, Loading } from "./ui";
 import { HUMANIZER_PROMPT } from "../lib/sections";
 import { normalise, type Recipe } from "../lib/recipes";
 import { WriteLike } from "./WriteLike";
@@ -368,6 +368,8 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
   const [saves, setSaves] = useState({ rev: section.content_rev, n: 0 });
   const { data: items } = useItems(piece.id, itemScope(recipe, section.id));
   const timer = useRef<number | null>(null);
+  // Bumped when the text is cleared, so an autosave already under way doesn't write the old text back.
+  const clearedAt = useRef(0);
   const written = section.status === "written";
   // One person (or one Claude) at a time writes a section. The lock is taken on the first edit.
   const lock = useEditLock(piece.id, "section", section.id, !written);
@@ -387,10 +389,12 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
   useEffect(() => {
     if (text === savedText || lock.other || conflict !== null) return;
     if (timer.current) window.clearTimeout(timer.current);
+    const startedAt = clearedAt.current;
     timer.current = window.setTimeout(async () => {
       // Someone else may have taken the section since the last edit: then nothing is saved, and the banner says why.
       if (!(await lock.ensure())) return;
       const server = await serverContent();
+      if (clearedAt.current !== startedAt) return;
       if (server !== null && server !== savedText) { setConflict(server); return; }
       setSaving(true);
       const { error: err } = await supabase.from("piece_sections").update({ content: text }).eq("id", section.id);
@@ -485,6 +489,23 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
               </a>
             )}
             <span className="spacer" />
+            {!written && (
+              <ClearButton what="this section's text" label="Clear text"
+                consequence="Everything written in this section is removed, including the AI draft it started from. Its talking points and sources stay, so you can start again."
+                disabledReason={lockedOut ? "Someone else is editing this section" : !text.trim() && !section.content.trim() && !section.ai_draft ? "The section is already empty" : null}
+                onConfirm={async () => {
+                  if (!(await lock.ensure())) throw new Error("Someone else is editing this section. Take over from the banner to continue.");
+                  clearedAt.current += 1;
+                  if (timer.current) window.clearTimeout(timer.current);
+                  // The checks described the old text, so they go with it.
+                  must(await supabase.from("piece_sections").update({ content: "", ai_draft: null, grammar_check: null, fact_check: null, contract_check: null }).eq("id", section.id).select("id"));
+                  setText("");
+                  setSavedText("");
+                  setConflict(null);
+                  setReviseOpen(false);
+                  onChanged();
+                }} />
+            )}
             {!written && !lockedOut && recipe.writing.ai_draft && text.trim() && (
               <button type="button" className="btn btn-small" aria-expanded={reviseOpen} onClick={() => setReviseOpen((o) => !o)}>Revise</button>
             )}

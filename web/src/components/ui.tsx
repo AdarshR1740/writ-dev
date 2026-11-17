@@ -54,6 +54,57 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
   );
 }
 
+/**
+ * A "Clear" button that asks first. Nothing is cleared until the writer confirms in the dialog. `onConfirm` may throw: the
+ * message is shown in the dialog and it stays open. `disabledReason` greys the button and shows why as its tooltip.
+ */
+export function ClearButton({ what, consequence, onConfirm, disabledReason, label = "Clear", small = true }: {
+  /** What is cleared, in a few words: "the scope", "the outline". */
+  what: string;
+  /** What the writer loses and what stays, one or two sentences. */
+  consequence: string;
+  onConfirm: () => Promise<void>;
+  /** Why it can't be used right now (the button is disabled and shows this as a tooltip). */
+  disabledReason?: string | null;
+  label?: string;
+  small?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const close = () => { if (!busy) { setOpen(false); setError(null); } };
+  return (
+    <>
+      <button type="button" className={`btn${small ? " btn-small" : ""} btn-quiet btn-danger`} disabled={Boolean(disabledReason)}
+        title={disabledReason ?? undefined} onClick={() => setOpen(true)}>{label}</button>
+      {open && (
+        <Modal title={`Clear ${what}?`} onClose={close}>
+          <div className="stack" style={{ gap: 14 }}>
+            <p>{consequence}</p>
+            <p className="small muted">This can't be undone.</p>
+            <ErrorText>{error}</ErrorText>
+            <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" className="btn" disabled={busy} onClick={close} autoFocus>Cancel</button>
+              <button type="button" className="btn btn-danger" disabled={busy} onClick={async () => {
+                setBusy(true);
+                setError(null);
+                try {
+                  await onConfirm();
+                  setOpen(false);
+                } catch (e) {
+                  setError(errorMessage(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}>{busy ? "Clearing…" : `Clear ${what}`}</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 export function Tabs<T extends string>({
   value,
   onChange,

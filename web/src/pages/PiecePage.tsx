@@ -4,7 +4,7 @@ import { errorMessage, supabase } from "../lib/supabase";
 import { must, useLoad } from "../lib/useLoad";
 import { formatDate } from "../lib/format";
 import { STAGES, type Contract, type Expectation, type Piece, type Stage, type ThreadMessage } from "../lib/types";
-import { ErrorText, Loading, CleanTextarea } from "../components/ui";
+import { ClearButton, ErrorText, Loading, CleanTextarea } from "../components/ui";
 import { ChatPanel } from "../components/ChatPanel";
 import { ResearchStep } from "../components/ResearchStep";
 import { normalise, stagesFor, type Recipe } from "../lib/recipes";
@@ -197,6 +197,11 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
           {contract.confirmed_at && !dirty ? <span className="tag ok">Confirmed</span> : <span className="tag">Draft</span>}
           <span className="spacer" />
           {dirty && <button type="button" className="btn btn-small" disabled={busy || lockedOut} onClick={() => run(() => save())}>Save</button>}
+          <ClearButton what="the scope" label="Clear scope"
+            consequence="The core question and every point to include are removed. The conversation with the AI stays."
+            disabledReason={contract.confirmed_at ? "Reopen the scope to clear it" : lockedOut ? "Someone else is editing the scope"
+              : !draft.core_question.trim() && !draft.expectations.some((e) => e.text.trim()) && !dirty ? "The scope is already empty" : null}
+            onConfirm={() => save({ core_question: "", expectations: [] })} />
           {recipe.contract.ai_thread && <button type="button" className="btn btn-small btn-primary" onClick={() => setChatOpen(true)}>Ask AI</button>}
         </header>
         <div className="stack" style={{ padding: "18px 20px 22px", gap: 28 }}>
