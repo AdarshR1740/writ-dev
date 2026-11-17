@@ -1247,3 +1247,30 @@ ol.points-list p { margin: 0; }
 .depth-pick { display: flex; align-items: center; gap: 8px; }
 .depth-pick select { width: auto; min-width: 0; }
 .section-link.is-sub { margin-left: 18px; }
+
+/* ---------- Writing page: editor sized to its text, action bar, compact checks ---------- */
+.doc-surface.fit .rich-body .ProseMirror { min-height: 160px; }
+.writer-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--rule); background: var(--sunken); border-radius: 0 0 8px 8px; }
+.check-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.check-rows > li { padding: 10px 0; min-height: 52px; display: grid; align-content: center; }
+.check-rows > li + li { border-top: 1px solid var(--rule); }
+.check-rows > li:first-child { padding-top: 0; }
+.check-row { display: grid; grid-template-columns: 11rem minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; }
+@media (max-width: 560px) { .check-row { grid-template-columns: 1fr auto; } .check-row .check-state { grid-column: 1 / -1; grid-row: 2; } }
+.check-row strong { font-size: 15px; }
+.check-row .check-state { margin-left: 0; flex: 1; min-width: 0; }
+.check-rows ul.fixes, .check-rows ul.flags, .check-rows ul.contract-results { margin-top: 8px; }
+.write-like-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
+.write-like-controls select { width: 100%; max-width: 20rem; height: 28px; min-height: 0; padding: 0 28px 0 10px; font-size: 13px; }
+.write-like-run { justify-self: end; }
+.write-like-ticks { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
+.check-note { margin: 6px 0 0; }
+.voice-proposal { display: grid; gap: 8px; margin-top: 10px; padding: 10px 12px; background: var(--sunken); border-radius: 6px; }
+.voice-proposal ul.fixes li { background: var(--surface); }
+.check-row.write-like { grid-template-columns: 11rem minmax(0, 1fr); }
+.check-row.write-like .check-state { grid-column: 2; }
+.check-row.polish { grid-template-columns: 11rem minmax(0, 1fr); }
+.check-intro { margin: 0 0 10px; }
+@media (pointer: coarse) { .write-like-controls select { height: 44px; } }
+.check-row.polish > .row { justify-content: flex-end; }

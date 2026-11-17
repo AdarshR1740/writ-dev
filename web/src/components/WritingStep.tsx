@@ -7,9 +7,9 @@ import { useShowCosts } from "../lib/showCosts";
 import { BLOCK_LABELS, type BriefBullet, type CheckResult, type Contract, type FactFlag, type Piece, type ResearchItem, type Section } from "../lib/types";
 import { ResearchStep } from "./ResearchStep";
 import { AiAction, ClearButton, CopyButton, ErrorText, Loading } from "./ui";
-import { HUMANIZER_PROMPT } from "../lib/sections";
 import { normalise, type Recipe } from "../lib/recipes";
-import { WriteLike } from "./WriteLike";
+import { WriteLikeRow } from "./WriteLike";
+import { headingLine } from "../lib/assemble";
 import { SourceLinks } from "./Links";
 import { RichEditor, type RichEditorHandle } from "./RichEditor";
 import { RevisePanel } from "./Revise";
@@ -95,6 +95,7 @@ export function WritingStep({ piece, onChanged, onContinue, onBusyChange, finish
     : null;
 
   const refresh = () => { reload(); onChanged(); };
+  const nextSection = sections.filter((x) => x.position > current.position).sort((a, b) => a.position - b.position)[0];
 
   return (
     <div className={`writing${sections.length === 1 && recipe.outline.mode === "off" ? " single" : ""}`}>
@@ -203,6 +204,9 @@ export function WritingStep({ piece, onChanged, onContinue, onBusyChange, finish
               blockedResearch={blockedResearch(current)}
               blockedBrief={blockedBrief}
               onChanged={refresh}
+              onNext={nextSection ? () => setSelected(nextSection.id) : undefined}
+              nextDisabled={busyRun}
+              allSections={sections}
             />
           </>
         )}
@@ -211,7 +215,7 @@ export function WritingStep({ piece, onChanged, onContinue, onBusyChange, finish
   );
 }
 
-function SectionWork({ piece, section, contract, recipe, blockedResearch, blockedBrief, onChanged }: {
+function SectionWork({ piece, section, contract, recipe, blockedResearch, blockedBrief, onChanged, onNext, nextDisabled, allSections }: {
   piece: Piece;
   section: Section;
   contract: Contract;
@@ -219,6 +223,10 @@ function SectionWork({ piece, section, contract, recipe, blockedResearch, blocke
   blockedResearch: string | null;
   blockedBrief: string | null;
   onChanged: () => void;
+  /** Opens the next section, when there is one. */
+  onNext?: () => void;
+  nextDisabled?: boolean;
+  allSections: Section[];
 }) {
   const owed = contract.expectations.filter((e) => section.expectation_ids.includes(e.id));
   return (
@@ -241,7 +249,7 @@ function SectionWork({ piece, section, contract, recipe, blockedResearch, blocke
       )}
       {section.status === "brief" && <BriefEditor section={section} scope={itemScope(recipe, section.id)} blocked={blockedBrief} onConfirmed={onChanged} />}
       {(section.status === "writing" || section.status === "written") && (
-        <Writer piece={piece} section={section} recipe={recipe} onChanged={onChanged} />
+        <Writer piece={piece} section={section} recipe={recipe} onChanged={onChanged} onNext={onNext} nextDisabled={nextDisabled} allSections={allSections} />
       )}
     </>
   );
@@ -346,7 +354,7 @@ interface GrammarFix {
   reason: string;
 }
 
-function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: Section; recipe: Recipe; onChanged: () => void }) {
+function Writer({ piece, section, recipe, onChanged, onNext, nextDisabled, allSections }: { piece: Piece; section: Section; recipe: Recipe; onChanged: () => void; onNext?: () => void; nextDisabled?: boolean; allSections: Section[] }) {
   const [text, setText] = useState(section.content);
   const [savedText, setSavedText] = useState(section.content);
   const [saving, setSaving] = useState(false);
@@ -453,13 +461,7 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
     !ran ? "never" : unchanged && rev === section.content_rev ? "current" : "stale";
   const grammarState = stateOf(Boolean(section.grammar_check), section.grammar_check?.rev);
   const factState = stateOf(Boolean(section.fact_check), section.fact_check?.rev);
-  const contractRuns = recipe.checks.contract && recipe.contract.mode !== "off" && section.expectation_ids.length > 0;
   const contractState = stateOf(Boolean(section.contract_check), section.contract_check?.rev);
-  const notCurrent = [
-    recipe.checks.grammar && grammarState !== "current" ? "Grammar" : null,
-    recipe.checks.fact && factState !== "current" ? "Facts" : null,
-    contractRuns && recipe.checks.contract && contractState !== "current" ? "Scope" : null,
-  ].filter(Boolean) as string[];
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const grammarFound = fixes?.length ?? section.grammar_check?.found ?? 0;
   const contractOpen = section.contract_check?.results.filter((r) => r.status !== "met").length ?? 0;
@@ -468,15 +470,17 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
   const flagCount = (fixes?.length ?? 0) + (section.fact_check?.flags.length ?? 0)
     + (section.contract_check?.results.filter((r) => r.status !== "met").length ?? 0);
 
+  // The whole piece as Markdown for copying, with this section's text as it is now (including unsaved typing).
+  const draftText = [`# ${piece.title}`, ...allSections.map((s) => `${headingLine(s)}\n\n${(s.id === section.id ? text : s.content).trim() || "(not written yet)"}`)].join("\n\n");
+
   const hasSide = Boolean(section.points) || (section.brief ?? []).length > 0 || (items ?? []).length > 0;
 
   return (
     <div className={`workbench${railOpen && hasSide ? "" : " no-rail"}`}>
       <div className="stack-lg">
-        <section className="doc-surface" aria-label="Your writing">
+        <section className="doc-surface fit" aria-label="Your writing">
           <header>
             <strong>Write</strong>
-            <span className="small faint">{words} words · {saving ? "saving…" : unsaved ? "unsaved" : "saved"}</span>
             {section.ai_draft && <span className="tag flag">started from an AI draft</span>}
             {written && <span className="tag ok">Written</span>}
             {!written && flagCount > 0 && (
@@ -510,19 +514,6 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
                 {railOpen ? "Hide points and sources" : "Show points and sources"}
               </button>
             )}
-            {written ? (
-              <button type="button" className="btn btn-small" disabled={busy} onClick={() => act(async () => {
-                must(await supabase.from("piece_sections").update({ status: "writing" }).eq("id", section.id).select("id"));
-                onChanged();
-              })}>Reopen</button>
-            ) : (
-              <button type="button" className="btn btn-small btn-primary" disabled={busy || !text.trim()} onClick={() => act(async () => {
-                await flush();
-                const { error: err } = await supabase.rpc("complete_section", { target_section: section.id });
-                if (err) throw err;
-                onChanged();
-              })}>Mark section written</button>
-            )}
           </header>
           {reviseOpen && !written && (
             <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--rule)" }}>
@@ -553,132 +544,120 @@ function Writer({ piece, section, recipe, onChanged }: { piece: Piece; section: 
           </div>
           <RichEditor value={text} onChange={setText} readOnly={written || lockedOut} label="Section text" handleRef={editorRef}
             placeholder="Write this section in your own words, from the talking points and sources." />
+          <div className="writer-bar">
+            <span className="small faint">{words} words · {saving ? "saving…" : unsaved ? "unsaved" : "saved"}</span>
+            <span className="spacer" />
+            {written ? (
+              <button type="button" className="btn btn-small" disabled={busy} onClick={() => act(async () => {
+                must(await supabase.from("piece_sections").update({ status: "writing" }).eq("id", section.id).select("id"));
+                onChanged();
+              })}>Reopen</button>
+            ) : (
+              <button type="button" className="btn btn-small btn-primary" disabled={busy || !text.trim()} onClick={() => act(async () => {
+                await flush();
+                const { error: err } = await supabase.rpc("complete_section", { target_section: section.id });
+                if (err) throw err;
+                onChanged();
+              })}>Mark section written</button>
+            )}
+            {onNext && <button type="button" className="btn btn-quiet btn-small" disabled={nextDisabled || unsaved || saving} title={unsaved || saving ? "Saving your text first" : undefined} onClick={onNext}>Next section →</button>}
+          </div>
         </section>
         <SourceLinks text={text} items={items} disabled={written || lockedOut} onChange={setText} />
 
         <ErrorText>{error}</ErrorText>
         {note && <p className="notice small">{note}</p>}
 
-        {!written && text.trim() && notCurrent.length > 0 && (
-          <p className="small faint">
-            Not checked since your last edit: {notCurrent.join(", ")}. The checks are advisory; you can still mark the section written.
-          </p>
-        )}
-
         {!written && (
           <div className="checks" id="checks">
-            {recipe.checks.grammar && <div className="check">
-              <div className="check-head">
-                <strong>Grammar</strong>
-                <span className="small muted">Spelling, grammar and punctuation only. Never rewrites your sentences.</span>
-                <CheckStatus state={grammarState} summary={grammarFound === 0 ? "no corrections" : plural(grammarFound, "suggestion", "suggestions")} />
-              </div>
-              <AiAction<{ suggestions: GrammarFix[]; cost_usd: number | null }>
-                label="Check grammar"
-                primary={false}
-                disabled={!text.trim() || unsaved}
-                reason={!text.trim() ? "Write something first" : "Saving…"}
-                payload={{ task: "grammar_check", section_id: section.id, text }}
-                onDone={(r) => { setFixes(r.suggestions); setNote(r.suggestions.length ? null : (showCosts ? `No corrections needed (${formatCost(r.cost_usd)}).` : "No corrections needed.")); onChanged(); }}
-              />
-              {fixes && fixes.length > 0 && (
-                <ul className="fixes">
-                  {fixes.map((f, i) => (
-                    <li key={i}>
-                      <span><del>{f.original}</del> → <ins>{f.replacement}</ins></span>
-                      <span className="small faint">{f.reason}</span>
-                      <span className="row" style={{ gap: 4 }}>
-                        <button type="button" className="btn btn-small" disabled={!text.includes(f.original)} onClick={() => {
-                          setText(text.replace(f.original, f.replacement));
-                          setFixes(fixes.filter((_, j) => j !== i));
-                        }}>Accept</button>
-                        <button type="button" className="btn btn-quiet btn-small" onClick={() => setFixes(fixes.filter((_, j) => j !== i))}>Ignore</button>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>}
-
-            {recipe.checks.fact && <div className="check">
-              <div className="check-head">
-                <strong>Facts</strong>
-                <span className="small muted">Flags numbers and claims that don't match your approved research.</span>
-                <CheckStatus state={factState} summary={section.fact_check && section.fact_check.flags.length > 0 ? `${plural(section.fact_check.flags.length, "flag", "flags")} to look at` : "every claim matches"} />
-              </div>
-              <AiAction label="Check facts" primary={false} disabled={!text.trim() || unsaved}
-                reason={!text.trim() ? "Write something first" : "Saving…"}
-                payload={{ task: "fact_check", section_id: section.id }} onDone={onChanged} />
-              {section.fact_check && (
-                section.fact_check.flags.length === 0 ? <p className="small ok-text">Every factual claim matches approved research.</p> : (
-                  <ul className="flags">
-                    {section.fact_check.flags.map((f: FactFlag, i) => (
-                      <li key={i}>
-                        <span className={`tag ${f.kind === "mismatch" ? "flag" : ""}`}>{f.kind}</span>
-                        <q>{f.sentence}</q>
-                        <span className="small muted">{f.issue}{f.item_id ? ` See item [${number(f.item_id)}].` : ""}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )
-              )}
-            </div>}
-
-            {recipe.checks.contract && recipe.contract.mode !== "off" && <div className="check">
-              <div className="check-head">
-                <strong>Scope</strong>
-                <span className="small muted">Does this section deliver what it owes? No score.</span>
-                {section.expectation_ids.length > 0 && (
-                  <CheckStatus state={contractState} summary={contractOpen > 0 ? `${plural(contractOpen, "point", "points")} not fully covered` : "every point is covered"} />
-                )}
-              </div>
-              <AiAction label="Check against scope" primary={false} disabled={!text.trim() || unsaved || section.expectation_ids.length === 0}
-                reason={section.expectation_ids.length === 0 ? "No scope points are assigned to this section" : !text.trim() ? "Write something first" : "Saving…"}
-                payload={{ task: "contract_check", section_id: section.id }} onDone={onChanged} />
-              {section.contract_check && <ContractResults results={section.contract_check.results} />}
-            </div>}
-
             <div className="check">
-              <div className="check-head">
-                <strong>Humanizer</strong>
-                <span className="small muted">Make the text sound less machine-written, in your own AI tool. Writ never rewrites your sentences.</span>
-              </div>
-              <div className="row" style={{ flexWrap: "wrap" }}>
-                {text.trim() && <CopyButton text={`${HUMANIZER_PROMPT}\n\n<text>\n${text}\n</text>`} label="Copy prompt + this section" />}
-                <CopyButton text={HUMANIZER_PROMPT} label="Copy prompt only" />
-              </div>
-              <p className="small muted">
-                Paste it into ChatGPT, Claude or Gemini, then paste the result back into the box above. Check numbers and names before you keep it.
-              </p>
+              <p className="small faint check-intro">The checks are advisory; you can still mark the section written.</p>
+              <ul className="check-rows">
+                {recipe.checks.grammar && <li>
+                  <div className="check-row">
+                    <strong title="Spelling, grammar and punctuation only. Never rewrites your sentences.">Grammar</strong>
+                    <CheckStatus state={grammarState} summary={grammarFound === 0 ? "no corrections" : plural(grammarFound, "suggestion", "suggestions")} />
+                    <AiAction<{ suggestions: GrammarFix[]; cost_usd: number | null }>
+                      label={grammarState === "never" ? "Run" : "Run again"}
+                      primary={false}
+                      small
+                      reasonAsTitle
+                      disabled={!text.trim() || unsaved}
+                      reason={!text.trim() ? "Write something first" : "Saving…"}
+                      payload={{ task: "grammar_check", section_id: section.id, text }}
+                      onDone={(r) => { setFixes(r.suggestions); setNote(r.suggestions.length ? null : (showCosts ? `No corrections needed (${formatCost(r.cost_usd)}).` : "No corrections needed.")); onChanged(); }}
+                    />
+                  </div>
+                  {fixes && fixes.length > 0 && (
+                    <ul className="fixes">
+                      {fixes.map((f, i) => (
+                        <li key={i}>
+                          <span><del>{f.original}</del> → <ins>{f.replacement}</ins></span>
+                          <span className="small faint">{f.reason}</span>
+                          <span className="row" style={{ gap: 4 }}>
+                            <button type="button" className="btn btn-small" disabled={!text.includes(f.original)} onClick={() => {
+                              setText(text.replace(f.original, f.replacement));
+                              setFixes(fixes.filter((_, j) => j !== i));
+                            }}>Accept</button>
+                            <button type="button" className="btn btn-quiet btn-small" onClick={() => setFixes(fixes.filter((_, j) => j !== i))}>Ignore</button>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>}
+
+                {recipe.checks.fact && <li>
+                  <div className="check-row">
+                    <strong title="Flags numbers and claims that don't match your approved research.">Facts</strong>
+                    <CheckStatus state={factState} summary={section.fact_check && section.fact_check.flags.length > 0 ? `${plural(section.fact_check.flags.length, "flag", "flags")} to look at` : "every claim matches"} />
+                    <AiAction label={factState === "never" ? "Run" : "Run again"} primary={false} small reasonAsTitle disabled={!text.trim() || unsaved}
+                      reason={!text.trim() ? "Write something first" : "Saving…"}
+                      payload={{ task: "fact_check", section_id: section.id }} onDone={onChanged} />
+                  </div>
+                  {section.fact_check && section.fact_check.flags.length > 0 && (
+                    <ul className="flags">
+                      {section.fact_check.flags.map((f: FactFlag, i) => (
+                        <li key={i}>
+                          <span className={`tag ${f.kind === "mismatch" ? "flag" : ""}`}>{f.kind}</span>
+                          <q>{f.sentence}</q>
+                          <span className="small muted">{f.issue}{f.item_id ? ` See item [${number(f.item_id)}].` : ""}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>}
+
+                {recipe.checks.contract && recipe.contract.mode !== "off" && <li>
+                  <div className="check-row">
+                    <strong title="Checks that this section still delivers the points the piece's original scope assigned to it. No score.">Scope verification</strong>
+                    {section.expectation_ids.length > 0
+                      ? <CheckStatus state={contractState} summary={contractOpen > 0 ? `${plural(contractOpen, "point", "points")} not fully covered` : "every point is covered"} />
+                      : <span className="check-state">No scope points assigned</span>}
+                    <AiAction label={contractState === "never" ? "Run" : "Run again"} primary={false} small reasonAsTitle
+                      disabled={!text.trim() || unsaved || section.expectation_ids.length === 0}
+                      reason={section.expectation_ids.length === 0 ? "No scope points are assigned to this section" : !text.trim() ? "Write something first" : "Saving…"}
+                      payload={{ task: "contract_check", section_id: section.id }} onDone={onChanged} />
+                  </div>
+                  {section.contract_check && <ContractResults results={section.contract_check.results} />}
+                </li>}
+
+                <WriteLikeRow sections={allSections} currentId={section.id} text={text} onApplyCurrent={setText} onChanged={onChanged}
+                  blocked={lockedOut ? "Someone else is editing this section" : unsaved ? "Saving your text…" : null} />
+
+                <li>
+                  <div className="check-row polish">
+                    <strong title="Copies just the text, to polish in another AI tool. Paste the result back above and check numbers and names.">Polish in another tool</strong>
+                    <span className="row" style={{ flexWrap: "wrap" }}>
+                      <CopyButton text={draftText} label="Copy entire draft" />
+                      <CopyButton text={text} label="Copy this section" disabled={!text.trim()} title={!text.trim() ? "Write something first" : undefined} />
+                    </span>
+                  </div>
+                </li>
+              </ul>
             </div>
 
-            <div className="check">
-              <div className="check-head">
-                <strong>Write like…</strong>
-                <span className="small muted">Edit this section to sound like one of your company's leaders, in your own AI tool. Writ never rewrites your sentences.</span>
-              </div>
-              <WriteLike text={text} what="section" />
-            </div>
 
-            {recipe.writing.ai_draft && <details className="helper">
-              <summary>Rather have AI draft it? (not recommended)</summary>
-              <div className="helper-body">
-                <p className="small muted">
-                  The AI drafts from the brief in your core voice and format profile. The section is then marked as AI-drafted
-                  in the editorial record, and readers trust that less. {text.trim() ? "Your current text is kept; the draft appears below it." : ""}
-                </p>
-                <AiAction<{ text: string; replaced: boolean }>
-                  label="Draft with AI"
-                  primary={false}
-                  payload={{ task: "section_draft", section_id: section.id }}
-                  onDone={(r) => {
-                    if (r.replaced) { setText(r.text); setSavedText(r.text); }
-                    else setNote(`AI draft:\n\n${r.text}`);
-                    onChanged();
-                  }}
-                />
-              </div>
-            </details>}
           </div>
         )}
         {written && section.contract_check && <ContractResults results={section.contract_check.results} />}

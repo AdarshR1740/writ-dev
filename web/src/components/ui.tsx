@@ -11,12 +11,14 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
   return <p className="muted" aria-live="polite">{label}</p>;
 }
 
-export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+export function CopyButton({ text, label = "Copy", disabled = false, title }: { text: string; label?: string; disabled?: boolean; title?: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
       type="button"
       className="btn btn-small"
+      disabled={disabled}
+      title={title}
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(text);

@@ -1075,6 +1075,90 @@ async function prepareRevise(userId: string, body: Record<string, unknown>): Pro
     });
 }
 
+// ---------------------------------------------------------------------------
+// Editing a section to sound like one of the company's leaders, as small edits the writer accepts one by one
+// ---------------------------------------------------------------------------
+
+export const VOICE_SYSTEM = `ROLE
+You edit text so it sounds like a named company leader wrote it, without changing what it says. The writer accepts or ignores each change.
+
+WHAT YOU RECEIVE
+- <voice>: the leader's name, role and a description of how they write.
+- <heading>: the section's heading, for context only.
+- <text>: the section as it is now, in Markdown.
+
+STEPS
+1. Read the whole text first.
+2. Read the description of how the leader writes.
+3. Find the passages whose wording, sentence length, rhythm or opening differ from that voice.
+4. For each, write the smallest edit that makes it sound like them. Leave passages that already fit alone.
+
+EDIT FIELDS
+- original: the passage to replace, copied EXACTLY from <text>, Markdown marks included, and long enough to appear only once.
+- replacement: the new passage, in Markdown.
+- reason: a few words on what it does.
+
+RULES
+- Change wording, rhythm and openings only. Every fact, number, name, date, quote and link stays exactly as it is.
+- Never add a claim, example or source that is not already in the text.
+- Keep the Markdown: heading levels, lists, links and emphasis.
+- Do not invent traits the description does not give.
+- At most 20 edits.
+
+OUTPUT
+- reply: 1 or 2 sentences: how the text now reads, or why nothing needed changing.
+- edits: the list of edits. Empty when the text already fits the voice.`;
+
+async function prepareVoice(userId: string, body: Record<string, unknown>): Promise<Prepared> {
+  const { piece, section } = await sectionFor(userId, body);
+  if (section.status === "written") throw new UserError("This section is marked written. Reopen it to edit it.");
+  const text = String(body.text ?? "");
+  if (!text.trim()) throw new UserError("There is no text to edit yet.");
+  if (text.length > 60_000) throw new UserError("That section is too long to edit in one go.");
+  const { data: voice } = await admin.from("leader_voices").select("name, role, profile")
+    .eq("id", String(body.voice_id ?? "")).eq("company_id", piece.company_id).maybeSingle();
+  if (!voice) throw new UserError("That leader voice no longer exists. Choose one again.");
+  if (!String(voice.profile ?? "").trim()) throw new UserError(`${voice.name} has no description of how they write yet. Add one on the Leader voices page.`);
+  const who = String(voice.role ?? "").trim() ? `${voice.name} (${String(voice.role).trim()})` : String(voice.name);
+  const user = `<voice>
+${who}
+
+HOW ${String(voice.name).toUpperCase()} WRITES
+${String(voice.profile).trim()}
+</voice>
+
+<heading>
+${section.heading}
+</heading>
+
+<text>
+${text}
+</text>`;
+  const system = `${(await promptSet(piece.company_id))("voice_edit", VOICE_SYSTEM)}
+
+${DRAFT_LINKS_NOTE}`;
+  return task<{ reply: string; edits: { original: string; replacement: string; reason: string }[] }>(
+    "section_voice", "write", piece, userId, system, user, reviseSchema, 4000,
+    async (data, cost, model) => {
+      // Keep only edits that apply cleanly: the passage is in the text exactly once, and no two edits overlap.
+      const found = data.edits.flatMap((e) => {
+        if (!e.original.trim() || e.original === e.replacement) return [];
+        const at = text.indexOf(e.original);
+        if (at < 0 || text.indexOf(e.original, at + 1) >= 0) return [];
+        return [{ at, end: at + e.original.length, original: e.original, replacement: e.replacement, reason: e.reason.trim() }];
+      }).sort((a, b) => a.at - b.at);
+      const edits: { original: string; replacement: string; reason: string }[] = [];
+      let upTo = -1;
+      for (const e of found) {
+        if (e.at < upTo) continue;
+        upTo = e.end;
+        edits.push({ original: e.original, replacement: e.replacement, reason: e.reason });
+      }
+      await logEvent(piece, userId, "section_voice_proposed", { section: section.id, edits: edits.length });
+      return { reply: data.reply, edits: edits.slice(0, 20), cost_usd: cost, model };
+    });
+}
+
 /** Records that the writer accepted AI-suggested revisions in a section. No model call, no cost. */
 export async function logRevision(userId: string, body: Record<string, unknown>) {
   const { piece, section } = await sectionFor(userId, body);
@@ -1952,6 +2036,7 @@ export const WRITING_TASKS: Record<string, (userId: string, body: Record<string,
   section_points: prepareSectionPoints,
   section_draft: prepareDraft,
   section_revise: prepareRevise,
+  section_voice: prepareVoice,
   grammar_check: prepareGrammar,
   fact_check: prepareFacts,
   contract_check: prepareContractCheck,
