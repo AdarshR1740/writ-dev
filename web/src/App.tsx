@@ -3,6 +3,7 @@ import { configured } from "./lib/supabase";
 import { SessionProvider, useSession } from "./lib/session";
 import { Layout } from "./components/Layout";
 import { Loading } from "./components/ui";
+import { UnsavedResult } from "./components/UnsavedResult";
 import { AuthPage } from "./pages/AuthPage";
 import { InvitePage } from "./pages/InvitePage";
 import { NewCompanyPage } from "./pages/NewCompanyPage";
@@ -40,6 +41,7 @@ export function App() {
   return (
     <SessionProvider>
       <Routed />
+      <UnsavedResult />
     </SessionProvider>
   );
 }

@@ -13,11 +13,11 @@ import { ChatPanel } from "./ChatPanel";
 import { normalise } from "../lib/recipes";
 import { asDepth, blankMainWithSubs, DEPTH_LABELS, groupEnd, moveGroup, moveSub, setLevel, type Draft } from "../lib/outlineRows";
 import { outlineView } from "../lib/stepViews";
-import { useEditLock } from "../lib/locks";
+import { useEditLock, withShortLock } from "../lib/locks";
 import { LockBanner } from "./LockBanner";
 
 /** The piece's working title and primary keyword, editable on the outline. Each is saved when you leave its box. */
-function TitleFields({ piece, disabled, onSaved }: { piece: Piece; disabled: boolean; onSaved: () => void }) {
+function TitleFields({ piece, disabled, onSaved, ensure }: { piece: Piece; disabled: boolean; onSaved: () => void; ensure: () => Promise<boolean> }) {
   const [title, setTitle] = useState(piece.title);
   const [keyword, setKeyword] = useState(piece.primary_keyword ?? "");
   const [err, setErr] = useState<string | null>(null);
@@ -28,6 +28,7 @@ function TitleFields({ piece, disabled, onSaved }: { piece: Piece; disabled: boo
   async function persist(patch: { title?: string; primary_keyword?: string }) {
     setErr(null);
     try {
+      if (!(await ensure())) throw new Error("Someone else is editing the outline. Take over from the banner to save your changes.");
       must(await supabase.from("pieces").update(patch).eq("id", piece.id).select("id"));
       onSaved();
     } catch (e) {
@@ -534,7 +535,7 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
               <p className="small muted">This format starts from a fixed outline. Adjust the headings if this piece needs it.</p>
             )}
             {/* The working title and primary keyword, here so anything the SEO & GEO checks say about them can be fixed in place. */}
-            {(recipe.outline.seo_geo_check || piece.primary_keyword) && <TitleFields piece={piece} disabled={locked} onSaved={onChanged} />}
+            {(recipe.outline.seo_geo_check || piece.primary_keyword) && <TitleFields piece={piece} disabled={locked} onSaved={onChanged} ensure={lock.ensure} />}
             {lock.other && (
               <LockBanner holder={lock.other} what="the outline" unsaved={dirty} problem={lock.problem} onTakeOver={() => void lock.takeOver()}
                 onDiscard={() => { resync.current = data; void reload(); }} />
@@ -767,8 +768,10 @@ export function OutlineStep({ piece, onAdvanced, onChanged }: { piece: Piece; on
                   savedQuote.current = cardDetail(card.claim, card.detail);
                 }
                 // The writer is the one giving this answer, so it is added as approved.
-                const { error: e } = await supabase.rpc("add_answer_to_research", { target_piece: piece.id, card: savedCard.current, item_quote: savedQuote.current });
-                if (e) throw e;
+                await withShortLock(piece.id, "research", async () => {
+                  const { error: e } = await supabase.rpc("add_answer_to_research", { target_piece: piece.id, card: savedCard.current, item_quote: savedQuote.current });
+                  if (e) throw e;
+                });
                 savedCard.current = null;
                 setAnsweredCount((n) => n + 1);
                 onChanged();
@@ -806,8 +809,12 @@ function ItemModal({ id, onClose, onSaved }: { id: string; onClose: () => void; 
     setBusy(true);
     setErr(null);
     try {
-      const { error: e } = await supabase.rpc("review_item", { item: id, decision, new_statement: decision === "approved" ? value.trim() : null });
-      if (e) throw e;
+      const pieceId = data?.piece_id;
+      const write = async () => {
+        const { error: e } = await supabase.rpc("review_item", { item: id, decision, new_statement: decision === "approved" ? value.trim() : null });
+        if (e) throw e;
+      };
+      await (pieceId ? withShortLock(pieceId, "research", write) : write());
       onSaved();
     } catch (e) {
       setErr(errorMessage(e));
@@ -853,12 +860,14 @@ function PointModal({ pieceId, expectationId, onClose, onSaved }: { pieceId: str
     setErr(null);
     let saved = false;
     try {
-      must(await supabase.from("piece_contracts").update({
-        expectations: data.expectations.map((e) => (e.id === expectationId ? { ...e, text: value.trim() } : e)),
-      }).eq("piece_id", pieceId).select("piece_id"));
-      saved = true;
-      const { error: e } = await supabase.rpc("confirm_contract", { target_piece: pieceId });
-      if (e) throw e;
+      await withShortLock(pieceId, "scope", async () => {
+        must(await supabase.from("piece_contracts").update({
+          expectations: data.expectations.map((e) => (e.id === expectationId ? { ...e, text: value.trim() } : e)),
+        }).eq("piece_id", pieceId).select("piece_id"));
+        saved = true;
+        const { error: e } = await supabase.rpc("confirm_contract", { target_piece: pieceId });
+        if (e) throw e;
+      });
       onSaved();
     } catch (e) {
       setErr(saved ? `Your edit is saved, but the scope isn't confirmed yet: ${errorMessage(e)} Confirm it again from the Scope step.` : errorMessage(e));
@@ -894,8 +903,12 @@ function PendingResearch({ items, onDecided, onOpen }: { items: ResearchItem[]; 
     setBusy(id);
     setErr(null);
     try {
-      const { error: e } = await supabase.rpc("review_item", { item: id, decision, new_statement: null });
-      if (e) throw e;
+      const write = async () => {
+        const { error: e } = await supabase.rpc("review_item", { item: id, decision, new_statement: null });
+        if (e) throw e;
+      };
+      const pieceId = items.find((it) => it.id === id)?.piece_id;
+      await (pieceId ? withShortLock(pieceId, "research", write) : write());
       onDecided();
     } catch (e) {
       setErr(errorMessage(e));
@@ -943,12 +956,14 @@ function ScopeModal({ pieceId, onClose, onSaved }: { pieceId: string; onClose: (
     setErr(null);
     let saved = false;
     try {
-      must(await supabase.from("piece_contracts").update({
-        expectations: data.expectations.map((p) => ({ ...p, text: textOf(p.id, p.text).trim() })),
-      }).eq("piece_id", pieceId).select("piece_id"));
-      saved = true;
-      const { error: e } = await supabase.rpc("confirm_contract", { target_piece: pieceId });
-      if (e) throw e;
+      await withShortLock(pieceId, "scope", async () => {
+        must(await supabase.from("piece_contracts").update({
+          expectations: data.expectations.map((p) => ({ ...p, text: textOf(p.id, p.text).trim() })),
+        }).eq("piece_id", pieceId).select("piece_id"));
+        saved = true;
+        const { error: e } = await supabase.rpc("confirm_contract", { target_piece: pieceId });
+        if (e) throw e;
+      });
       onSaved();
     } catch (e) {
       setErr(saved ? `Your edits are saved, but the scope isn't confirmed yet: ${errorMessage(e)} Confirm it again from the Scope step.` : errorMessage(e));
@@ -1191,7 +1206,9 @@ function FixPanel({ piece, includeGaps, quiet, analysisSig, actionable, stateSig
     // Everything this Apply did, kept as one batch so one Undo reverses all of it.
     const batch: FixBatch = { snap: null, resolves: [], researchItems: [], researched: [] };
     if (chosen.length > 0) {
-      const { data, error: e } = await supabase.rpc("apply_alignment_fixes", { target_piece: piece.id, fixes });
+      // It changes the scope and the research as well as the outline, so it needs those locks too.
+      const { data, error: e } = await withShortLock(piece.id, "scope", () => withShortLock(piece.id, "research",
+        async () => await supabase.rpc("apply_alignment_fixes", { target_piece: piece.id, fixes })));
       if (e) throw e;
       // The findings these changes settle drop out of the list. The scope and research have moved on from what the check
       // numbered, so the check also stops offering more proposals until it is run again.
@@ -1275,7 +1292,8 @@ function FixPanel({ piece, includeGaps, quiet, analysisSig, actionable, stateSig
       : { snap: latest ?? null, resolves: [], researchItems: [], researched: [] };
     // A batch of only gap searches has no scope, research or outline change to put back.
     if (batch.snap !== null) {
-      const { error: e } = await supabase.rpc("undo_alignment_fixes", { target_piece: piece.id, snapshot: batch.snap, force });
+      const { error: e } = await withShortLock(piece.id, "scope", () => withShortLock(piece.id, "research",
+        async () => await supabase.rpc("undo_alignment_fixes", { target_piece: piece.id, snapshot: batch.snap, force })));
       if (e) {
         if (e.message.includes("changed_since_apply")) { setAskForce(true); return; }
         throw e;
@@ -1285,7 +1303,8 @@ function FixPanel({ piece, includeGaps, quiet, analysisSig, actionable, stateSig
     // The sources the searches added are removed again.
     let removed = 0;
     if (batch.researchItems.length > 0) {
-      const { data: n, error: re } = await supabase.rpc("remove_gap_research", { target_piece: piece.id, item_ids: batch.researchItems });
+      const { data: n, error: re } = await withShortLock(piece.id, "research",
+        async () => await supabase.rpc("remove_gap_research", { target_piece: piece.id, item_ids: batch.researchItems }));
       if (re) throw re;
       removed = Number(n ?? 0);
     }

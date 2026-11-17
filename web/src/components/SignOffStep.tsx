@@ -14,6 +14,8 @@ import { useSession } from "../lib/session";
 import { SeoGeoPanel } from "./SeoGeoPanel";
 import { WriteLike } from "./WriteLike";
 import { normalise, type Recipe } from "../lib/recipes";
+import { useEditLock } from "../lib/locks";
+import { LockBanner } from "./LockBanner";
 
 interface Record_ {
   sections: Section[];
@@ -66,6 +68,10 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
   const [finalText, setFinalText] = useState(piece.final_text ?? "");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // One person (or one Claude) at a time on the final checks, customer approval and sign-off. Taken when one of them is used.
+  const lock = useEditLock(piece.id, "final", null, piece.stage !== "done");
+  const lockedOut = lock.other !== null;
+  const finalBusyMessage = "Someone else is working on the final checks and sign-off. Take over from the banner to continue.";
 
   if (error) return <ErrorText>{error}</ErrorText>;
   if (!data) return <Loading />;
@@ -162,6 +168,9 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
       <aside className="rail" aria-label="Sign-off">
         <div className="card stack" style={{ padding: 16 }}>
           <h3>{done ? (formalSignOff ? "Signed off" : "Done") : formalSignOff ? "Sign off" : "Finish"}</h3>
+          {lock.other && (
+            <LockBanner holder={lock.other} what="the final checks and sign-off" problem={lock.problem} onTakeOver={() => void lock.takeOver()} />
+          )}
           {done ? (
             <p className="small">{formalSignOff ? "By" : "Marked done by"} <strong>{signerName}</strong> on {formatDate(piece.signed_off_at!)}.</p>
           ) : (
@@ -173,7 +182,7 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
                   ? `Signing off records you as the person who approved this piece${needsEditor || recipe.signoff.editor_required ? " (an editor must sign this format)" : ""}.`
                   : "This format doesn't need a named sign-off. Marking it done records who finished it."}
               </p>
-              {recipe.checks.customer_approval && <CustomerApproval piece={piece} onRecorded={onChanged} />}
+              {recipe.checks.customer_approval && <CustomerApproval piece={piece} onRecorded={onChanged} ensure={lock.ensure} lockedOut={lockedOut} busyMessage={finalBusyMessage} />}
               {recipe.signoff.final_paste && (
                 <details className="helper">
                   <summary>Edit the whole piece to sound like a leader</summary>
@@ -192,9 +201,10 @@ export function SignOffStep({ piece, onChanged }: { piece: Piece; onChanged: () 
               )}
               <ErrorText>{actionError}</ErrorText>
               {needsEditor && <p className="small faint">Only an editor can sign off.</p>}
-              <button type="button" className="btn btn-primary" disabled={busy || needsEditor || unwritten.length > 0 || (contractCheck && !piece.final_check) || needsApproval} onClick={async () => {
+              <button type="button" className="btn btn-primary" disabled={busy || lockedOut || needsEditor || unwritten.length > 0 || (contractCheck && !piece.final_check) || needsApproval} onClick={async () => {
                 setBusy(true);
                 setActionError(null);
+                if (!(await lock.ensure())) { setBusy(false); setActionError(finalBusyMessage); return; }
                 const { error: err } = await supabase.rpc("sign_off", { target_piece: piece.id, final_version: finalText.trim() || null });
                 setBusy(false);
                 if (err) setActionError(err.message);
@@ -275,7 +285,9 @@ function LearnPanel({ piece }: { piece: Piece }) {
   );
 }
 
-function CustomerApproval({ piece, onRecorded }: { piece: Piece; onRecorded: () => void }) {
+function CustomerApproval({ piece, onRecorded, ensure, lockedOut, busyMessage }: {
+  piece: Piece; onRecorded: () => void; ensure: () => Promise<boolean>; lockedOut: boolean; busyMessage: string;
+}) {
   const [approver, setApprover] = useState(piece.brief_extra?.approval_contact ?? "");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -293,7 +305,8 @@ function CustomerApproval({ piece, onRecorded }: { piece: Piece; onRecorded: () 
       <input type="text" value={approver} onChange={(e) => setApprover(e.target.value)} placeholder="Who approved it" aria-label="Approver" />
       <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="How and when, e.g. email of 1 Nov" aria-label="Approval note" />
       <ErrorText>{error}</ErrorText>
-      <button type="button" className="btn btn-small" disabled={!approver.trim()} onClick={async () => {
+      <button type="button" className="btn btn-small" disabled={!approver.trim() || lockedOut} onClick={async () => {
+        if (!(await ensure())) { setError(busyMessage); return; }
         const { error: err } = await supabase.rpc("record_customer_approval", { target_piece: piece.id, approver, note });
         if (err) setError(err.message); else onRecorded();
       }}>Record approval</button>

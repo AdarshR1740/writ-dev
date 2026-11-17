@@ -15,6 +15,7 @@
 import type Anthropic from "npm:@anthropic-ai/sdk@1.3.0";
 import { handle, json, UserError } from "../_shared/cors.ts";
 import { admin, requireRole, requireUser } from "../_shared/supabase.ts";
+import { assertStillHeld, callLockScope, clientOf, takeCallLocks } from "../_shared/call-locks.ts";
 import { budgetForEstimate, callAnthropicCited, callOpenAISearch, connect, recordUsage as recordModelUsage, runModel } from "../_shared/llm.ts";
 import { fetchPage, quoteFound } from "../_shared/web.ts";
 import { costUsd, estimateTokens, SEARCH_COST_USD } from "../_shared/models.ts";
@@ -158,6 +159,8 @@ async function storeFindings(
       sourceIds.set(f.url, data.id);
     }
   }
+  // If someone took the research over while the model ran, nothing is written and the findings go back to the writer.
+  await assertStillHeld(findings);
   const { data: inserted, error } = await admin.from("research_items").insert(findings.map((f) => ({
     company_id: piece.company_id,
     piece_id: piece.id,
@@ -200,7 +203,7 @@ async function recordUsage(piece: Piece, userId: string, task: string, model: st
   return cost;
 }
 
-Deno.serve(handle(async (req) => {
+Deno.serve(handle((req) => callLockScope(async () => {
   const user = await requireUser(req);
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
@@ -239,6 +242,8 @@ Deno.serve(handle(async (req) => {
   // A section search run by the Writing step's prepare run: fewer, better sources, stored as approved.
   const auto = Boolean(section) && body.action === "search" && body.auto === true;
   await requireRole(user.id, piece.company_id, "member");
+  // Research is written under the research lock, taken as the person who asked and from their tab. An estimate writes nothing.
+  if (body.mode !== "estimate") await takeCallLocks(user.id, clientOf(body), piece.id, [{ scope: "research" }]);
   if (section && auto) {
     // Preparing a section automatically (the Writing step's "prepare" run): any section not written yet, in any order.
     if (section.status !== "research" && section.status !== "brief") throw new UserError("This section is already being written.");
@@ -441,4 +446,4 @@ Deno.serve(handle(async (req) => {
   }
 
   throw new UserError("Unknown action.");
-}));
+})));

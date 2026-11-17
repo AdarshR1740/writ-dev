@@ -16,6 +16,8 @@ import { normalise } from "../lib/recipes";
 import { cardDetail } from "../lib/cards";
 import { MAX_LINKS, parseLinks } from "../lib/links";
 import { useShowCosts } from "../lib/showCosts";
+import { useEditLock, withShortLock } from "../lib/locks";
+import { LockBanner } from "./LockBanner";
 
 interface Loaded {
   items: ResearchItem[];
@@ -72,6 +74,9 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
   const reviewing = recipe.research.review;
   const canSearch = recipe.research.web_search && (section ? recipe.sections.research : recipe.research.enabled);
   const scopePayload: Record<string, string> = section ? { section_id: section.id } : { piece_id: piece.id };
+  // One person (or one Claude) at a time works on a piece's research. The lock is taken on the first change.
+  const lock = useEditLock(piece.id, "research", null, !locked);
+  const researchBusyMessage = "Someone else is working on the research. Take over from the banner to continue.";
 
   const ordered = useMemo(() => {
     const rank = { unreviewed: 0, approved: 1, rejected: 2 } as const;
@@ -80,6 +85,7 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
 
   const review = useCallback(async (item: ResearchItem, decision: ResearchItem["status"], statement?: string) => {
     setActionError(null);
+    if (!(await lock.ensure())) { setActionError(researchBusyMessage); return; }
     // Optimistic: reviewing is the fast path, so don't wait for the round trip.
     setData((d) => d && { ...d, items: d.items.map((i) => (i.id === item.id ? { ...i, status: decision, statement: statement ?? i.statement } : i)) });
     const { error: err } = await supabase.rpc("review_item", { item: item.id, decision, new_statement: statement ?? null });
@@ -87,7 +93,7 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
       setActionError(err.message);
       reload();
     }
-  }, [setData, reload]);
+  }, [setData, reload, lock.ensure]);
 
   // Keyboard review: j/k to move, a to approve, r to reject, u to undo.
   useEffect(() => {
@@ -148,6 +154,7 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
     setBusy(true);
     setActionError(null);
     try {
+      if (!(await lock.ensure())) throw new Error(researchBusyMessage);
       await fn();
       if (refresh) await reload();
     } catch (err) {
@@ -173,6 +180,9 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
   return (
     <div className="workbench">
       <div className="stack-lg">
+        {lock.other && (
+          <LockBanner holder={lock.other} what="the research" problem={lock.problem} onTakeOver={() => void lock.takeOver()} />
+        )}
         <div className="gate">
           <div className="stack" style={{ gap: 4 }}>
             <strong>
@@ -214,7 +224,8 @@ export function ResearchStep({ piece, section, blocked, onAdvanced }: {
               void act(async () => {
                 const { error: err } = section
                   ? await supabase.rpc("reopen_section_research", { target_section: section.id })
-                  : await supabase.rpc("reopen_piece_research", { target_piece: piece.id });
+                  // Reopening the piece's research also unconfirms the outline, which is outline work.
+                  : await withShortLock(piece.id, "outline", async () => await supabase.rpc("reopen_piece_research", { target_piece: piece.id }));
                 if (err) throw err;
                 onAdvanced();
               }, false);

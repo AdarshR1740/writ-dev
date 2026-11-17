@@ -25,9 +25,25 @@ export const supabase = createClient(url ?? "http://localhost", anonKey ?? "miss
   global: { fetch: withClientId },
 });
 
-/** Call one of our edge functions; throws an Error with the server's message. */
+/**
+ * A server function refused because someone else holds the edit lock (they took it over while the AI was running), and sent back
+ * what the AI had produced so the writer does not lose it.
+ */
+export class UnsavedResultError extends Error {
+  constructor(message: string, public unsaved: unknown, public task: string) {
+    super(message);
+  }
+}
+
+/** Tells the page to show an AI result that could not be saved (see UnsavedResult). */
+export const UNSAVED_EVENT = "writ:unsaved";
+
+/**
+ * Call one of our edge functions; throws an Error with the server's message. The body carries this tab's client id: the
+ * function takes the edit lock as this tab, so it can tell this tab from another one and from Claude.
+ */
 export async function callFunction<T>(name: string, body: Record<string, unknown>): Promise<T> {
-  const { data, error } = await supabase.functions.invoke(name, { body });
+  const { data, error } = await supabase.functions.invoke(name, { body: { ...body, client: CLIENT_ID } });
   if (error) {
     let message = error.message;
     // The browser got no response at all: offline, the function was being redeployed, or the run took too long.
@@ -38,6 +54,11 @@ export async function callFunction<T>(name: string, body: Record<string, unknown
     if (ctx && typeof ctx.json === "function") {
       const payload = await ctx.json().catch(() => null);
       if (payload?.error) message = payload.error;
+      if (payload && payload.code === "edit_locked" && payload.unsaved != null) {
+        const task = String(body.task ?? body.action ?? name);
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(UNSAVED_EVENT, { detail: { message, unsaved: payload.unsaved, task } }));
+        throw new UnsavedResultError(message, payload.unsaved, task);
+      }
     }
     throw new Error(message);
   }

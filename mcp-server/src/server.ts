@@ -3,10 +3,11 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DRAFT_RULES, NEW_PIECE_FINISH, NEW_PIECE_RULES, ONBOARDING } from "./prompts.js";
 import {
-  WritError, addExpertAnswer, checkPiece as checkPieceFor, lockedOutline as lockedOutlineFor, lockedSection as lockedSectionFor, addFormats, addResearch, applyAlignmentFixes, completeResearch, confirmOutline, confirmScope, createCompany,
+  WritError, addExpertAnswer, checkPiece as checkPieceFor, lockedOutline as lockedOutlineFor, lockedSection as lockedSectionFor,
+  lockedPiece as lockedPieceFor, lockedResearchOf as lockedResearchOfFor, addFormats, addResearch, applyAlignmentFixes, completeResearch, confirmOutline, confirmScope, createCompany,
   getContextDocuments, getPiece, getResearch, getReviewInput, getSection, getSetup, getVoice, listPieces, markFindings, reviewResearch,
   saveAnalysis, saveContextDocument, saveFinalChecks, saveOutline, saveOutlineChecks, saveScope, saveSectionChecks, saveSectionDraft,
-  saveSectionPoints, startPiece, useResearch,
+  saveSectionPoints, startPiece, useResearch, noteReadPiece, noteReadSection, readNotice,
 } from "./writ.js";
 
 // stdout carries the protocol, so anything for a human goes to stderr.
@@ -30,6 +31,11 @@ async function run(fn: (c: SupabaseClient) => Promise<unknown>): Promise<Result>
 }
 const lockedOutline = <T,>(c: SupabaseClient, ref: string, fn: () => Promise<T>) => lockedOutlineFor(c, ref, fn, ctx.clientId);
 const lockedSection = <T,>(c: SupabaseClient, id: string, fn: () => Promise<T>) => lockedSectionFor(c, id, fn, ctx.clientId);
+const lockedPiece = <T,>(c: SupabaseClient, ref: string, scope: "scope" | "research" | "final", fn: () => Promise<T>, opts?: { append?: boolean }) => lockedPieceFor(c, ref, scope, fn, ctx.clientId, opts);
+const lockedResearchOf = <T,>(c: SupabaseClient, by: { item?: string; items?: string[]; section?: string }, fn: () => Promise<T>, opts?: { append?: boolean }) => lockedResearchOfFor(c, by, fn, ctx.clientId, opts);
+/** Adds Claude's notice (someone is editing this) to what a read returns, when there is one. */
+const withNotice = (value: unknown, notice: string | null) =>
+  notice && value && typeof value === "object" && !Array.isArray(value) ? { notice, ...(value as Record<string, unknown>) } : value;
 const checkPiece = (c: SupabaseClient, ref: string) => checkPieceFor(c, ref, ctx.clientId);
 
 const server = new McpServer({ name: "writ", version: "0.2.0" });
@@ -49,14 +55,19 @@ server.registerTool("writ_get_piece", {
   description: "A piece's brief, the reader's question and expectations, and its outline with each section's id, status and whether it is prepared. Name the piece by its code, for example SI-0012.",
   inputSchema: { piece: z.string().describe("The piece code (SI-0012) or id") },
   annotations: { readOnlyHint: true },
-}, ({ piece }) => run((c) => getPiece(c, piece)));
+}, ({ piece }) => run(async (c) => { await noteReadPiece(c, ctx.clientId, piece); return getPiece(c, piece); }));
 
 server.registerTool("writ_get_section", {
   title: "Get everything needed to write a section",
   description: "One section's brief: its heading and purpose, the outline around it, the reader's question, the talking points with their evidence, the approved research (numbered, with URLs to link), the planned structure and the current text. Use the section id from writ_get_piece.",
   inputSchema: { section_id: z.string().describe("The section id") },
   annotations: { readOnlyHint: true },
-}, ({ section_id }) => run((c) => getSection(c, section_id)));
+}, ({ section_id }) => run(async (c) => {
+  await noteReadSection(c, ctx.clientId, section_id);
+  const section = await getSection(c, section_id);
+  // Reading a section to write it: hold it for a short while, or say that the writer is already in it.
+  return withNotice(section, await readNotice(c, ctx.clientId, { section: section_id }));
+}));
 
 server.registerTool("writ_check_piece", {
   title: "Check what the writer will see",
@@ -143,7 +154,13 @@ server.registerTool("writ_start_piece", {
     writer_approved: z.literal(true).describe("Must be true, and only after the writer has said yes to creating this piece in this conversation"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-}, ({ writer_approved: _approved, ...a }) => run((c) => startPiece(c, a)));
+}, ({ writer_approved: _approved, ...a }) => run(async (c) => {
+  const started = await startPiece(c, a);
+  // Claude made this piece, so it knows what is in it: no need to read it before the first saves.
+  const code = (started as { code?: string } | null)?.code;
+  if (code) await noteReadPiece(c, ctx.clientId, code);
+  return started;
+}));
 
 server.registerTool("writ_save_scope", {
   title: "Save a piece's scope draft",
@@ -154,7 +171,7 @@ server.registerTool("writ_save_scope", {
     points: z.array(z.string()).describe("The full list of points, one short line each (at most 7, or 2 for a short format)"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ piece, core_question, points }) => run((c) => saveScope(c, piece, core_question, points)));
+}, ({ piece, core_question, points }) => run((c) => lockedPiece(c, piece, "scope", () => saveScope(c, piece, core_question, points))));
 
 server.registerTool("writ_confirm_scope", {
   title: "Confirm a piece's scope",
@@ -164,14 +181,14 @@ server.registerTool("writ_confirm_scope", {
     writer_approved: z.literal(true).describe("Must be true, and only after the writer has said yes to this exact scope in this conversation"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ piece }) => run((c) => confirmScope(c, piece)));
+}, ({ piece }) => run((c) => lockedPiece(c, piece, "scope", () => confirmScope(c, piece))));
 
 server.registerTool("writ_get_research", {
   title: "List a piece's research",
   description: "The research items of a piece (or of one section when section_id is given): numbered, with statement, quote, source title and URL, type, status (unreviewed, approved, rejected) and whether the quote was checked. Item ids are what writ_review_research and writ_use_research need.",
   inputSchema: { piece: z.string().describe("The piece code (SI-0012) or id"), section_id: z.string().optional().describe("Give it to list that section's own research") },
   annotations: { readOnlyHint: true },
-}, ({ piece, section_id }) => run((c) => getResearch(c, piece, section_id)));
+}, ({ piece, section_id }) => run(async (c) => { await noteReadPiece(c, ctx.clientId, piece, ["research"]); return getResearch(c, piece, section_id); }));
 
 server.registerTool("writ_add_research", {
   title: "Save research Claude found",
@@ -192,7 +209,7 @@ server.registerTool("writ_add_research", {
     gap: z.string().optional().describe("The gap this search is aimed at (gap-0, gap-1), for research that answers a gap found by the gap analysis; allowed while the outline is open"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-}, ({ piece, findings, section_id, auto, gap }) => run((c) => addResearch(c, piece, findings, section_id, auto, gap)));
+}, ({ piece, findings, section_id, auto, gap }) => run((c) => lockedPiece(c, piece, "research", () => addResearch(c, piece, findings, section_id, auto, gap), { append: true })));
 
 server.registerTool("writ_review_research", {
   title: "Record the writer's decisions on research items",
@@ -206,14 +223,14 @@ server.registerTool("writ_review_research", {
     writer_approved: approved("these decisions"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ decisions }) => run((c) => reviewResearch(c, decisions)));
+}, ({ decisions }) => run((c) => (decisions.length ? lockedResearchOf(c, { items: decisions.map((d) => d.item) }, () => reviewResearch(c, decisions)) : reviewResearch(c, decisions))));
 
 server.registerTool("writ_complete_research", {
   title: "Finish a piece's research step",
   description: "Closes the piece-level research through Writ and moves the piece to the outline. Writ refuses while items still need a decision (when the format reviews research). Only call it after the writer says the research is done.",
   inputSchema: { piece: z.string().describe("The piece code (SI-0012) or id"), writer_approved: approved("finishing the research") },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ piece }) => run((c) => completeResearch(c, piece)));
+}, ({ piece }) => run((c) => lockedPiece(c, piece, "research", () => completeResearch(c, piece))));
 
 server.registerTool("writ_save_outline", {
   title: "Save a piece's outline draft",
@@ -244,7 +261,7 @@ server.registerTool("writ_use_research", {
   description: "Copies approved piece-level research items into a section, so the section's talking points can cite them. Use the item ids from writ_get_research. Only approved items can be copied.",
   inputSchema: { section_id: z.string().describe("The section id from writ_get_piece"), item_ids: z.array(z.string()).describe("Research item ids") },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ section_id, item_ids }) => run((c) => useResearch(c, section_id, item_ids)));
+}, ({ section_id, item_ids }) => run((c) => lockedResearchOf(c, { section: section_id }, () => useResearch(c, section_id, item_ids), { append: true })));
 
 server.registerTool("writ_save_section_points", {
   title: "Save a section's talking points",
@@ -286,7 +303,15 @@ server.registerTool("writ_get_check_input", {
     section_id: z.string().optional().describe("Needed for scope section"),
   },
   annotations: { readOnlyHint: true },
-}, ({ piece, scope, section_id }) => run((c) => getReviewInput(c, piece, scope, section_id)));
+}, ({ piece, scope, section_id }) => run(async (c) => {
+  // The input a check works from, and the steps its save tool will write: remember what was read, and hold the step briefly.
+  if (scope === "section" && section_id) await noteReadSection(c, ctx.clientId, section_id);
+  else await noteReadPiece(c, ctx.clientId, piece, scope === "analysis" ? ["scope", "research", "outline"] : scope === "outline" ? ["outline"] : ["final"]);
+  const input = await getReviewInput(c, piece, scope, section_id);
+  const notice = scope === "section" && section_id ? await readNotice(c, ctx.clientId, { section: section_id })
+    : await readNotice(c, ctx.clientId, { piece, scope: scope === "piece" ? "final" : "outline" });
+  return withNotice(input, notice);
+}));
 
 server.registerTool("writ_save_analysis", {
   title: "Save the gap analysis",
@@ -330,7 +355,7 @@ server.registerTool("writ_apply_alignment_fixes", {
     writer_approved: approved("these fixes"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-}, ({ piece, fixes, resolves }) => run((c) => lockedOutline(c, piece, () => applyAlignmentFixes(c, piece, fixes, resolves))));
+}, ({ piece, fixes, resolves }) => run((c) => lockedOutline(c, piece, () => lockedPiece(c, piece, "scope", () => lockedPiece(c, piece, "research", () => applyAlignmentFixes(c, piece, fixes, resolves))))));
 
 server.registerTool("writ_add_expert_answer", {
   title: "Add the writer's own answer to the research",
@@ -341,14 +366,14 @@ server.registerTool("writ_add_expert_answer", {
     writer_approved: approved("adding this answer to the research"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-}, ({ piece, answer }) => run((c) => lockedOutline(c, piece, () => addExpertAnswer(c, piece, answer))));
+}, ({ piece, answer }) => run((c) => lockedOutline(c, piece, () => lockedPiece(c, piece, "research", () => addExpertAnswer(c, piece, answer), { append: true }))));
 
 server.registerTool("writ_save_outline_checks", {
   title: "Save the outline's SEO and GEO check",
   description: "Saves the outline's SEO and GEO check results in the piece's own field, so Writ shows them. One entry per check; use the check keys from writ_get_check_input.",
   inputSchema: { piece: z.string().describe("The piece code (SI-0012) or id"), checks: z.array(seoGeoCheck) },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ piece, checks }) => run((c) => saveOutlineChecks(c, piece, checks)));
+}, ({ piece, checks }) => run((c) => lockedOutline(c, piece, () => saveOutlineChecks(c, piece, checks))));
 
 server.registerTool("writ_save_section_checks", {
   title: "Save a section's check results",
@@ -362,7 +387,7 @@ server.registerTool("writ_save_section_checks", {
     contract: z.object({ results: z.array(contractResult) }).optional(),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ section_id, content_rev, grammar, fact, contract }) => run((c) => saveSectionChecks(c, section_id, content_rev, { grammar, fact, contract })));
+}, ({ section_id, content_rev, grammar, fact, contract }) => run((c) => lockedSection(c, section_id, () => saveSectionChecks(c, section_id, content_rev, { grammar, fact, contract }))));
 
 server.registerTool("writ_save_final_checks", {
   title: "Save the final checks",
@@ -373,7 +398,7 @@ server.registerTool("writ_save_final_checks", {
     seo_geo: z.object({ checks: z.array(seoGeoCheck), meta_title: z.string().optional(), meta_description: z.string().optional() }).optional(),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-}, ({ piece, contract, seo_geo }) => run((c) => saveFinalChecks(c, piece, { contract, seo_geo })));
+}, ({ piece, contract, seo_geo }) => run((c) => lockedPiece(c, piece, "final", () => saveFinalChecks(c, piece, { contract, seo_geo }))));
 
 server.registerPrompt("onboarding", {
   title: "Get started with Writ",

@@ -58,8 +58,8 @@ export interface PieceFacts {
   contract: { confirmed: boolean; points: number } | null;
   research: { approved: number; unreviewed: number };
   sections: SectionFacts[];
-  /** Edit locks that are live right now (someone is editing the outline, or a section). */
-  locks?: { scope: "outline" | "section"; /** The section's heading, for a section lock. */ section?: string; holder: string; kind: "person" | "ai"; since: string }[];
+  /** Edit locks that are live right now (someone is editing the scope, the research, the outline, a section or the final checks). */
+  locks?: { scope: "scope" | "research" | "outline" | "section" | "final"; /** The section's heading, for a section lock. */ section?: string; holder: string; kind: "person" | "ai"; since: string }[];
 }
 
 export interface Concern {
@@ -149,11 +149,12 @@ export function describePiece(f: PieceFacts): PieceDescription {
     add({ id: "ready-to-sign-off", severity: "note", step: "signoff", message: "Every section is written. The piece is ready to sign off.", suggestion: "Review the draft in Writ and sign off." });
   }
   for (const l of f.locks ?? []) {
-    const what = l.scope === "outline" ? "the outline" : `the section "${l.section ?? "a section"}"`;
+    const what = l.scope === "section" ? `the section "${l.section ?? "a section"}"`
+      : l.scope === "final" ? "the final checks and sign-off" : `the ${l.scope}`;
     add({
-      id: l.scope === "outline" ? "locked-outline" : `locked-section-${l.section ?? ""}`,
+      id: l.scope === "section" ? `locked-section-${l.section ?? ""}` : `locked-${l.scope}`,
       severity: "note",
-      step: l.scope === "outline" ? "outline" : "writing",
+      step: l.scope === "section" ? "writing" : l.scope === "final" ? "signoff" : l.scope,
       message: `${l.holder} is editing ${what} in Writ (since ${l.since}).`,
       suggestion: "Saves to it are refused until they finish or someone takes over. Do not retry in a loop: tell the writer, or work on something else.",
     });

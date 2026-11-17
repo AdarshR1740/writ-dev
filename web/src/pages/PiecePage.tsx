@@ -12,6 +12,8 @@ import { LineagePanel, ReviewDue, ReviseDialog } from "../components/PieceHistor
 import { OutlineStep } from "../components/OutlineStep";
 import { WritingStep } from "../components/WritingStep";
 import { SignOffStep } from "../components/SignOffStep";
+import { LockBanner } from "../components/LockBanner";
+import { useEditLock, withShortLock } from "../lib/locks";
 
 export function PiecePage() {
   const { pieceId } = useParams();
@@ -131,9 +133,16 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
   // The conversation can take over the screen; the scope then shows as a compact bar.
   const [chatOpen, setChatOpen] = useState(false);
 
+  // One person (or one Claude) at a time edits the scope. The lock is taken on the first edit.
+  const lock = useEditLock(piece.id, "scope", null, true);
   useEffect(() => {
     if (data && !draft) setDraft({ core_question: data.contract.core_question, expectations: data.contract.expectations });
   }, [data, draft]);
+  useEffect(() => {
+    if (data && draft && (draft.core_question !== data.contract.core_question
+      || JSON.stringify(draft.expectations) !== JSON.stringify(data.contract.expectations))) void lock.ensure();
+  }, [data, draft, lock.ensure]);
+  const lockedOut = lock.other !== null;
   useEffect(() => threadEnd.current?.scrollIntoView({ block: "nearest" }), [data?.messages.length]);
 
   if (error) return <ErrorText>{error}</ErrorText>;
@@ -144,6 +153,7 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
 
   async function save(next = draft!) {
     const clean = { core_question: next.core_question.trim(), expectations: next.expectations.filter((e) => e.text.trim()) };
+    if (!(await lock.ensure())) throw new Error("Someone else is editing the scope. Take over from the banner to save your changes.");
     must(await supabase.from("piece_contracts").update(clean).eq("piece_id", piece.id).select("piece_id"));
     setDraft(clean);
     await reload();
@@ -186,14 +196,18 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
           <strong>Scope</strong>
           {contract.confirmed_at && !dirty ? <span className="tag ok">Confirmed</span> : <span className="tag">Draft</span>}
           <span className="spacer" />
-          {dirty && <button type="button" className="btn btn-small" disabled={busy} onClick={() => run(() => save())}>Save</button>}
+          {dirty && <button type="button" className="btn btn-small" disabled={busy || lockedOut} onClick={() => run(() => save())}>Save</button>}
           {recipe.contract.ai_thread && <button type="button" className="btn btn-small btn-primary" onClick={() => setChatOpen(true)}>Ask AI</button>}
         </header>
         <div className="stack" style={{ padding: "18px 20px 22px", gap: 28 }}>
+          {lock.other && (
+            <LockBanner holder={lock.other} what="the scope" unsaved={dirty} problem={lock.problem} onTakeOver={() => void lock.takeOver()}
+              onDiscard={() => setDraft({ core_question: contract.core_question, expectations: contract.expectations })} />
+          )}
           {lite && <p className="small muted">A short format: one point to land, plus up to two more to cover.</p>}
           <label className="field">
             <span>Core question this piece wants to answer</span>
-            <input type="text" value={draft.core_question} onChange={(e) => setDraft({ ...draft, core_question: e.target.value })}
+            <input type="text" value={draft.core_question} disabled={lockedOut} onChange={(e) => setDraft({ ...draft, core_question: e.target.value })}
               placeholder="The one question a reader wants answered" />
           </label>
           <div className="field">
@@ -201,7 +215,7 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
             <ol className="expectations">
               {draft.expectations.map((e, i) => (
                 <li key={e.id}>
-                  <CleanTextarea rows={2} value={e.text} onChange={(ev) => setExp(e.id, ev.target.value)} placeholder="e.g. A checklist to test whether your messaging is ready" aria-label={`Point ${i + 1}`} />
+                  <CleanTextarea rows={2} value={e.text} disabled={lockedOut} onChange={(ev) => setExp(e.id, ev.target.value)} placeholder="e.g. A checklist to test whether your messaging is ready" aria-label={`Point ${i + 1}`} />
                   <div className="row" style={{ gap: 2 }}>
                     <button type="button" className="btn btn-quiet btn-small" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
                     <button type="button" className="btn btn-quiet btn-small" disabled={i === draft.expectations.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
@@ -211,14 +225,15 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
               ))}
             </ol>
             <div>
-              <button type="button" className="btn btn-small" disabled={draft.expectations.length >= maxExpectations} onClick={() => setDraft({ ...draft, expectations: [...draft.expectations, { id: newId(), text: "" }] })}>
+              <button type="button" className="btn btn-small" disabled={lockedOut || draft.expectations.length >= maxExpectations} onClick={() => setDraft({ ...draft, expectations: [...draft.expectations, { id: newId(), text: "" }] })}>
                 Add a point
               </button>
             </div>
           </div>
           <ErrorText>{actionError}</ErrorText>
           <div className="row">
-            <button type="button" className="btn btn-primary" disabled={busy || (Boolean(contract.confirmed_at) && !dirty)} onClick={() => run(async () => {
+            <button type="button" className="btn btn-primary" disabled={busy || lockedOut || (Boolean(contract.confirmed_at) && !dirty)} onClick={() => run(async () => {
+              if (!(await lock.ensure())) throw new Error("Someone else is editing the scope. Take over from the banner to continue.");
               if (dirty) await save();
               const { error: err } = await supabase.rpc("confirm_contract", { target_piece: piece.id });
               if (err) throw err;
@@ -227,9 +242,11 @@ function ContractStep({ piece, recipe, onAdvanced }: { piece: Piece; recipe: Rec
               {contract.confirmed_at && !dirty ? "Confirmed" : "Confirm scope"}
             </button>
             {contract.confirmed_at && !dirty && (
-              <button type="button" className="btn" disabled={busy} onClick={() => {
+              <button type="button" className="btn" disabled={busy || lockedOut} onClick={() => {
                 void run(async () => {
-                  const { error: err } = await supabase.rpc("reopen_contract", { target_piece: piece.id });
+                  if (!(await lock.ensure())) throw new Error("Someone else is editing the scope. Take over from the banner to continue.");
+                  // Reopening the scope also unconfirms the outline, which is outline work.
+                  const { error: err } = await withShortLock(piece.id, "outline", async () => await supabase.rpc("reopen_contract", { target_piece: piece.id }));
                   if (err) throw err;
                   onAdvanced();
                 });

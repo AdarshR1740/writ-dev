@@ -3,14 +3,16 @@ import { supabase } from "./supabase";
 import { CLIENT_ID } from "./clientId";
 
 /**
- * Edit locks, from the app's side. One person (or one Claude) at a time edits the outline, and each section's text. The lock is
- * taken on the first edit, renewed while work goes on, and frees itself a few minutes after the last activity. The database
- * enforces it (see supabase/migrations/20261129000000_edit_locks.sql); this hook is how the screen takes it and shows who holds it.
+ * Edit locks, from the app's side. One person (or one Claude) at a time works on each step of a piece: the scope, the research,
+ * the outline, each section's text, and the final checks and sign-off. The lock is taken on the first edit, renewed while work
+ * goes on, and frees itself a few minutes after the last activity. The database enforces it (see
+ * supabase/migrations/20261129000000_edit_locks.sql and 20261130000000_lock_every_step.sql); this hook is how the screen takes it
+ * and shows who holds it.
  *
  * A lock keeps two people from saving at once. It does not tell a tab that what it is showing has gone out of date (someone saved
  * while this tab was locked out): the screens compare with what is saved before they write, and ask.
  */
-export type LockScope = "outline" | "section";
+export type LockScope = "scope" | "research" | "outline" | "section" | "final";
 
 export interface LockHolder {
   label: string;
@@ -49,6 +51,50 @@ async function acquire(pieceId: string, scope: LockScope, sectionId: string | nu
   return data as Acquired;
 }
 
+const LOCK_WORDS: Record<LockScope, string> = {
+  scope: "the scope", research: "the research", outline: "the outline", section: "this section", final: "the final checks and sign-off",
+};
+
+/**
+ * For a one-off write outside the step that owns the lock (a scope point edited from the outline's check, a research item
+ * approved there): takes the lock, runs the write, lets go. Someone else holding it means nothing is written and the writer is
+ * told who. Do not use it for a lock this tab already holds through useEditLock: letting go would drop that one.
+ */
+export async function withShortLock<T>(pieceId: string, scope: LockScope, fn: () => Promise<T>): Promise<T> {
+  // This tab already holds that lock (a step is open on it, or an overlapping short lock): take nothing, and let go of nothing.
+  const key = `${pieceId}:${scope}`;
+  if (heldHere.get(key)?.() || shortHeld.has(key)) return fn();
+  shortHeld.add(key);
+  try {
+    return await takeAndRun(pieceId, scope, fn);
+  } finally {
+    shortHeld.delete(key);
+  }
+}
+
+/** Locks this tab holds through useEditLock, by piece and kind (section locks are not piece-wide and are left out). */
+const heldHere = new Map<string, () => boolean>();
+const shortHeld = new Set<string>();
+
+async function takeAndRun<T>(pieceId: string, scope: LockScope, fn: () => Promise<T>): Promise<T> {
+  let got: Acquired | "unavailable";
+  try {
+    got = await acquire(pieceId, scope, null, false);
+  } catch {
+    return fn(); // the lock can't be reached (the network): the database still refuses a write someone else's lock should stop
+  }
+  if (got !== "unavailable" && !got.ok) {
+    throw new Error(`${got.holder_label} is editing ${LOCK_WORDS[scope]}. Wait until they finish, or take over from that step.`);
+  }
+  try {
+    return await fn();
+  } finally {
+    if (got !== "unavailable" && got.ok) {
+      void supabase.rpc("release_lock", { target_piece: pieceId, lock_scope: scope, target_section: null, client: CLIENT_ID, lock_token: got.token });
+    }
+  }
+}
+
 /**
  * Takes the lock on the first edit and holds it while the writer works. `enabled` is false when there is nothing to lock (the
  * outline is confirmed, the section is written): then `ensure` always says yes and nothing is shown.
@@ -77,6 +123,15 @@ export function useEditLock(pieceId: string, scope: LockScope, sectionId: string
     expiresAt.current = Date.parse(r.expires_at);
     setOther(null);
   };
+
+  // Lets a one-off write (withShortLock) know this tab already holds the lock, so it does not take it again and let go of it.
+  useEffect(() => {
+    if (scope === "section") return;
+    const key = `${pieceId}:${scope}`;
+    const holds = () => mine.current;
+    heldHere.set(key, holds);
+    return () => { if (heldHere.get(key) === holds) heldHere.delete(key); };
+  }, [pieceId, scope]);
 
   // Who holds it, as seen from here.
   useEffect(() => {

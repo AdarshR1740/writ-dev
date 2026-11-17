@@ -646,43 +646,229 @@ export async function saveOutline(db: SupabaseClient, ref: string, sections: { h
 // Edit locks: one person or one Claude at a time on the outline, and on each section's text
 // ---------------------------------------------------------------------------
 
-type LockScope = "outline" | "section";
+export type LockScope = "scope" | "research" | "outline" | "section" | "final";
 type LockResult = { ok: true; token?: string } | { ok: false; holder_label: string; holder_kind: string; since: string; expires_at: string };
+
+const LOCK_WORDS: Record<LockScope, string> = {
+  scope: "the scope", research: "the research", outline: "the outline", section: "the section", final: "the final checks and sign-off",
+};
 
 /** The message Claude gets when the writer (or another Claude) holds the lock. It says what happened and what to do. */
 export function lockedMessage(r: { holder_label: string; since: string }, scope: LockScope): string {
   const t = new Date(r.since);
   const at = Number.isNaN(t.getTime()) ? "" : ` (since ${t.toISOString().slice(11, 16)} UTC)`;
-  return `${r.holder_label} is editing the ${scope === "outline" ? "outline" : "section"} in Writ${at}. Nothing was saved. Tell the writer, and ask them to finish or to take over from the banner in Writ; then try again. Do not retry in a loop.`;
+  return `${r.holder_label} is editing ${LOCK_WORDS[scope]} in Writ${at}. Nothing was saved. Tell the writer, and ask them to finish or to take over from the banner in Writ; then try again. Do not retry in a loop.`;
 }
+
+/** How long Claude keeps a lock after its last write on that step. */
+export const AI_LEASE_SECONDS = 60;
 
 const lockFunctionsMissing = (e: { code?: string; message?: string }) =>
   e.code === "PGRST202" || e.code === "42883" || /acquire_lock/.test(e.message ?? "");
 
+// ---------------------------------------------------------------------------
+// Step versions: Claude must not save over a step that changed after it read it
+// ---------------------------------------------------------------------------
+
+const NIL_SECTION = "00000000-0000-0000-0000-000000000000";
+
+/** What each connection last read of each step: the version (a timestamp the database keeps) it saw. In memory, per connection. */
+const seenVersions = new Map<string, string>();
+const versionKey = (clientId: string, pieceId: string, scope: LockScope, sectionId: string | null) =>
+  `${clientId}|${pieceId}|${scope}|${scope === "section" ? sectionId ?? "" : ""}`;
+
+type Version = { ok: true; version: string; by: string } | { ok: false };
+const versionsMissing = (e: { code?: string; message?: string }) =>
+  e.code === "42P01" || e.code === "PGRST205" || (/step_versions/.test(e.message ?? "") && /does not exist|schema cache|Could not find/i.test(e.message ?? ""));
+
+async function readVersion(db: SupabaseClient, pieceId: string, scope: LockScope, sectionId: string | null): Promise<Version> {
+  const r = await db.from("step_versions").select("version, changed_by_label").eq("piece_id", pieceId).eq("scope", scope)
+    .eq("section_id", scope === "section" && sectionId ? sectionId : NIL_SECTION).maybeSingle();
+  // A database without step versions yet behaves as before: nothing is checked.
+  if (r.error) {
+    if (versionsMissing(r.error)) return { ok: false };
+    throw new WritError(`Could not check whether ${LOCK_WORDS[scope]} has changed: ${r.error.message}`);
+  }
+  const row = r.data as { version?: string; changed_by_label?: string } | null;
+  return { ok: true, version: row?.version ?? "none", by: row?.changed_by_label ?? "Someone" };
+}
+
+/** Remembers that this connection has read these steps, at the version they are at now. Call it before returning the content. */
+export async function noteRead(db: SupabaseClient, clientId: string, pieceId: string, steps: { scope: LockScope; sectionId?: string | null }[]): Promise<void> {
+  for (const s of steps) {
+    try {
+      const v = await readVersion(db, pieceId, s.scope, s.sectionId ?? null);
+      if (v.ok) seenVersions.set(versionKey(clientId, pieceId, s.scope, s.sectionId ?? null), v.version);
+    } catch {
+      // A read must never fail because the version could not be noted; a later save will ask for a re-read.
+    }
+  }
+}
+
+/** noteRead for a piece's four piece-wide steps, by piece code or id. */
+export async function noteReadPiece(db: SupabaseClient, clientId: string, ref: string, scopes: ("scope" | "research" | "outline" | "final")[] = ["scope", "research", "outline", "final"]): Promise<void> {
+  try {
+    const piece = await findPiece(db, ref);
+    await noteRead(db, clientId, piece.id, scopes.map((scope) => ({ scope })));
+  } catch {
+    // The read itself reports a missing piece.
+  }
+}
+
+/** noteRead for one section (and the piece it belongs to). */
+export async function noteReadSection(db: SupabaseClient, clientId: string, sectionId: string): Promise<void> {
+  try {
+    const id = sectionId.trim();
+    if (!UUID.test(id)) return;
+    const s = (await db.from("piece_sections").select("piece_id").eq("id", id).maybeSingle()).data as { piece_id: string } | null;
+    if (s) await noteRead(db, clientId, s.piece_id, [{ scope: "section", sectionId: id }]);
+  } catch {
+    // As above.
+  }
+}
+
+const atUtc = (iso: string) => {
+  const t = new Date(iso);
+  return Number.isNaN(t.getTime()) ? "" : ` at ${t.toISOString().slice(11, 16)} UTC`;
+};
+
+export function changedMessage(by: string, scope: LockScope, version: string): string {
+  return `${by} changed ${LOCK_WORDS[scope]}${atUtc(version)}, after you last read it. Nothing was saved. Do not merge it or save over it yourself: read it again, tell the writer what changed, and ask how they want the two versions combined before you save anything.`;
+}
+
+export function notReadMessage(scope: LockScope): string {
+  return `You have not read ${LOCK_WORDS[scope]} in this conversation, so Writ cannot tell whether it has changed since. Nothing was saved. Read it first (writ_get_piece, writ_get_section, writ_get_research or writ_get_check_input), then save.`;
+}
+
 /**
- * Runs a write while holding the lock on the outline or a section, and lets go afterwards. If someone else holds it, nothing is
- * written and Claude is told who and what to do. A Writ database without the lock functions behaves as before.
+ * Runs a write while holding the lock on a step, and keeps holding it for the lease afterwards. If someone else holds it, nothing is
+ * written and Claude is told who and what to do. The write also needs Claude to have read the step first, and refuses when the step
+ * changed since (even if the other writer's lock has long expired). An append (new research) needs neither the read nor the match.
+ * A Writ database without the lock functions, or without step versions, behaves as before.
  */
-export async function withLock<T>(db: SupabaseClient, pieceId: string, scope: LockScope, sectionId: string | null, fn: () => Promise<T>, clientId: string = CLIENT_ID): Promise<T> {
+export async function withLock<T>(db: SupabaseClient, pieceId: string, scope: LockScope, sectionId: string | null, fn: () => Promise<T>, clientId: string = CLIENT_ID, opts: { append?: boolean } = {}): Promise<T> {
   const args = { target_piece: pieceId, lock_scope: scope, target_section: sectionId, client: clientId };
-  const r = await db.rpc("acquire_lock", { ...args, kind: "ai", take_over: false, lease_seconds: 60 });
+  const r = await db.rpc("acquire_lock", { ...args, kind: "ai", take_over: false, lease_seconds: AI_LEASE_SECONDS });
   if (r.error) {
     if (lockFunctionsMissing(r.error)) return fn();
     throw new WritError(`Could not check the edit lock: ${r.error.message}`);
   }
   const res = r.data as LockResult;
   if (res && res.ok === false) throw new WritError(lockedMessage(res, scope));
+  // The lock is not released after the write. Claude keeps it for the lease (AI_LEASE_SECONDS), renewed by each further write,
+  // so a person cannot start typing in the middle of Claude's work; it expires on its own once Claude stops.
+  const letGo = () => Promise.resolve(db.rpc("release_lock", { ...args, lock_token: (res as { token?: string }).token ?? null })).then(() => undefined, () => undefined);
+
+  let before: Version;
   try {
-    return await fn();
-  } finally {
-    // Let go straight away: the lock only has to cover the write itself.
-    await Promise.resolve(db.rpc("release_lock", { ...args, lock_token: (res as { token?: string }).token ?? null })).catch(() => undefined);
+    before = await readVersion(db, pieceId, scope, sectionId);
+  } catch (e) {
+    await letGo();
+    throw e;
+  }
+  const key = versionKey(clientId, pieceId, scope, sectionId);
+  let current = false;
+  if (before.ok) {
+    const seen = seenVersions.get(key);
+    if (!opts.append) {
+      if (seen === undefined) { await letGo(); throw new WritError(notReadMessage(scope)); }
+      if (seen !== before.version) { await letGo(); throw new WritError(changedMessage(before.by, scope, before.version)); }
+    }
+    current = seen !== undefined && seen === before.version;
+  }
+  // Some writes also move other steps on (saving an outline can change a section's heading; a section's points can copy research).
+  // Note those steps' versions first, so that Claude's own effect on them is not taken for someone else's change afterwards.
+  const alsoTouched = before.ok ? await versionsOfRelated(db, clientId, pieceId, scope) : new Map<string, Version>();
+  const result = await fn();
+  // Claude's own write moves the version on. Keep its picture current, but only if nothing else had changed before it wrote.
+  if (before.ok && current) {
+    const after = await readVersion(db, pieceId, scope, sectionId).catch((): Version => ({ ok: false }));
+    if (after.ok) seenVersions.set(key, after.version);
+  }
+  for (const [k, was] of alsoTouched) {
+    if (!was.ok || seenVersions.get(k) !== was.version) continue; // Claude had not read it, or it was already stale
+    const [, , rScope, rSection] = k.split("|");
+    const now = await readVersion(db, pieceId, rScope as LockScope, rSection || null).catch((): Version => ({ ok: false }));
+    // Only a change made by Claude itself is taken over; a writer's change stays a change Claude has not seen.
+    if (now.ok && now.version !== was.version && now.by.startsWith("Claude (for ")) seenVersions.set(k, now.version);
+  }
+  return result;
+}
+
+/** The versions, right now, of the other steps this connection has read that a write on `scope` may also move. */
+async function versionsOfRelated(db: SupabaseClient, clientId: string, pieceId: string, scope: LockScope): Promise<Map<string, Version>> {
+  const out = new Map<string, Version>();
+  const prefix = (s: LockScope) => `${clientId}|${pieceId}|${s}|`;
+  const watch = scope === "outline" ? prefix("section") : scope === "section" ? prefix("research") : null;
+  if (!watch) return out;
+  for (const k of seenVersions.keys()) {
+    if (!k.startsWith(watch)) continue;
+    const [, , rScope, rSection] = k.split("|");
+    out.set(k, await readVersion(db, pieceId, rScope as LockScope, rSection || null).catch((): Version => ({ ok: false })));
+  }
+  return out;
+}
+
+/**
+ * Called by the tools Claude reads a step with before it writes (a section, a check's input). Takes the lock for a short while, so
+ * the writer cannot start typing while Claude drafts, and reports back when someone else already holds it, so Claude can stop
+ * before it spends time drafting. Returns the notice to show Claude, or null.
+ */
+export const AI_READ_LEASE_SECONDS = 120;
+export async function claimForRead(db: SupabaseClient, clientId: string, pieceId: string, scope: LockScope, sectionId: string | null): Promise<string | null> {
+  try {
+    const r = await db.rpc("acquire_lock", { target_piece: pieceId, lock_scope: scope, target_section: sectionId, client: clientId, kind: "ai", take_over: false, lease_seconds: AI_READ_LEASE_SECONDS });
+    if (r.error) return null;
+    const res = r.data as LockResult;
+    if (res && res.ok === false) {
+      return `${res.holder_label} is editing ${LOCK_WORDS[scope]} in Writ right now${atUtc(res.since)}. Do not start drafting from this until they finish: a save would be refused. Tell the writer, and try again later.`;
+    }
+  } catch {
+    // Reading never fails because of a lock.
+  }
+  return null;
+}
+
+/** claimForRead for a read that names a section, or a piece's step, by id or code. Never throws. */
+export async function readNotice(db: SupabaseClient, clientId: string, target: { section: string } | { piece: string; scope: "outline" | "final" }): Promise<string | null> {
+  try {
+    if ("section" in target) {
+      const id = target.section.trim();
+      if (!UUID.test(id)) return null;
+      const s = (await db.from("piece_sections").select("piece_id").eq("id", id).maybeSingle()).data as { piece_id: string } | null;
+      return s ? await claimForRead(db, clientId, s.piece_id, "section", id) : null;
+    }
+    const piece = await findPiece(db, target.piece);
+    return await claimForRead(db, clientId, piece.id, target.scope, null);
+  } catch {
+    return null;
   }
 }
 
 export async function lockedOutline<T>(db: SupabaseClient, ref: string, fn: () => Promise<T>, clientId: string = CLIENT_ID): Promise<T> {
   const piece = await findPiece(db, ref);
   return withLock(db, piece.id, "outline", null, fn, clientId);
+}
+
+/** A write on one of the piece-wide steps (scope, research, final checks), by piece code or id. */
+export async function lockedPiece<T>(db: SupabaseClient, ref: string, scope: "scope" | "research" | "final", fn: () => Promise<T>, clientId: string = CLIENT_ID, opts: { append?: boolean } = {}): Promise<T> {
+  const piece = await findPiece(db, ref);
+  return withLock(db, piece.id, scope, null, fn, clientId, opts);
+}
+
+/** The research lock for a write that names research items or a section, not a piece: finds the piece they belong to. */
+export async function lockedResearchOf<T>(db: SupabaseClient, by: { item?: string; items?: string[]; section?: string }, fn: () => Promise<T>, clientId: string = CLIENT_ID, opts: { append?: boolean } = {}): Promise<T> {
+  const ids = by.items ?? [by.item ?? by.section ?? ""];
+  const table = by.section !== undefined ? "piece_sections" : "research_items";
+  const pieces = new Set<string>();
+  for (const raw of ids) {
+    const id = raw.trim();
+    if (!UUID.test(id)) throw new WritError(table === "research_items" ? `"${raw}" is not a research item id (use the ids from writ_get_research).` : "section_id must be the id shown by writ_get_piece.");
+    const row = must(await db.from(table).select("piece_id").eq("id", id).maybeSingle(), table === "research_items" ? "Research item" : "Section") as { piece_id: string };
+    pieces.add(row.piece_id);
+  }
+  if (pieces.size !== 1) throw new WritError("These research items belong to different pieces. Review one piece's research at a time.");
+  return withLock(db, [...pieces][0], "research", null, fn, clientId, opts);
 }
 
 export async function lockedSection<T>(db: SupabaseClient, sectionId: string, fn: () => Promise<T>, clientId: string = CLIENT_ID): Promise<T> {
@@ -732,7 +918,7 @@ export async function checkPiece(db: SupabaseClient, ref: string, clientId: stri
     analysis: { exists: Boolean(analysis && Object.keys(analysis).some((k) => k !== "benchmark_done")), benchmarkDone: analysis?.benchmark_done === true },
     contract: c ? { confirmed: Boolean(c.confirmed_at), points: (c.expectations ?? []).length } : null,
     research: { approved: counts.approved ?? 0, unreviewed: counts.unreviewed ?? 0 },
-    locks: ((held.error ? [] : held.data ?? []) as { scope: "outline" | "section"; section_id: string; holder_client: string; holder_label: string; holder_kind: "person" | "ai"; acquired_at: string }[])
+    locks: ((held.error ? [] : held.data ?? []) as { scope: LockScope; section_id: string; holder_client: string; holder_label: string; holder_kind: "person" | "ai"; acquired_at: string }[])
       // This connection's own lock is not news.
       .filter((l) => l.holder_client !== clientId)
       .map((l) => ({

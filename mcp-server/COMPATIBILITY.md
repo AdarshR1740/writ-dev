@@ -90,12 +90,29 @@ Run it again whenever `stepViews.ts` changes in the app, and commit the result. 
 
 ## 5. Edit locks
 
-One person (or one Claude) at a time edits the outline, and each section's text. A lock is taken on the first edit, renewed while work goes on, and frees itself a few minutes after the last activity. The database enforces it (migration `20261129000000_edit_locks.sql`); the app shows a banner with "Take over".
+One person (or one Claude) at a time works on each step of a piece. A lock is taken on the first edit, renewed while work goes on, and frees itself a few minutes after the last activity. The database enforces it (migrations `20261129000000_edit_locks.sql`, `20261130000000_lock_every_step.sql` and `20261201000000_call_locks_and_versions.sql`); the app shows a banner with "Take over".
+
+| Lock | What it covers | Tools that take it |
+|---|---|---|
+| `scope` | the reader contract (core question, points, confirming), the piece's setup (topic, goal, audience, format, recipe, brief) | `writ_save_scope`, `writ_confirm_scope`, `writ_apply_alignment_fixes` |
+| `research` | a piece's research items: adding, reviewing, finishing | `writ_add_research`, `writ_review_research`, `writ_complete_research`, `writ_use_research`, `writ_add_expert_answer` |
+| `outline` | sections' structure, title, keyword, benchmark, the outline's SEO/GEO check, confirming | `writ_save_outline`, `writ_confirm_outline`, `writ_save_analysis`, `writ_mark_findings`, `writ_apply_alignment_fixes`, `writ_add_expert_answer`, `writ_save_outline_checks` |
+| `section` | one section's text, heading, brief, points, and its grammar/fact/contract check results | `writ_save_section_draft`, `writ_save_section_points`, `writ_save_section_checks` |
+| `final` | the final check, the final SEO/GEO check, customer approval, final text, sign-off | `writ_save_final_checks` |
 
 **What changes for this server**
-- Eight write tools can now be **refused** while the writer holds the lock: `writ_save_outline`, `writ_confirm_outline`, `writ_save_analysis`, `writ_mark_findings`, `writ_apply_alignment_fixes`, `writ_add_expert_answer` (outline), and `writ_save_section_points`, `writ_save_section_draft` (a section). The message says who is editing and what to do; nothing is saved. Their parameters and results are unchanged.
-- Each Claude connection sends `x-writ-client` (a per-process id) with every request, and takes the lock only for the length of a write, so it never keeps the writer out.
+- Those write tools can be **refused** while someone else holds the lock. The message says who is editing and what to do; nothing is saved. Their parameters and results are unchanged. A tool that touches two kinds (for example `writ_add_expert_answer`: outline and research) needs both to be free.
+- Each Claude connection sends `x-writ-client` (a per-process id) with every request. After a write it **keeps the lock for 60 seconds** (renewed by each further write on that step), so a writer cannot start typing in the middle of Claude's work; it expires by itself once Claude stops.
+- `writ_get_section` and `writ_get_check_input` also take the lock for 2 minutes (Claude reads them in order to write). When someone else already holds it, the read still works and the result carries a `notice` saying who is editing and not to start drafting.
 - `writ_check_piece` reports who is editing (a note, never a problem).
 - A Writ database without the lock functions behaves as before: the tools detect that and write normally. Apply the migration first or last; both orders are safe.
 
-**Rule:** any new tool that changes the outline's structure or a section's text must run inside `lockedOutline` or `lockedSection` (see `src/writ.ts`), and the database will refuse it if it does not hold the lock. Writes made by Writ's own server functions (the service role) are not checked.
+**Step versions (a second check, for what a lock cannot catch)**
+- The database keeps, for each step and each section, when it last changed and who changed it (`step_versions`, migration `20261201000000_call_locks_and_versions.sql`). Writes by the writer, by Claude and by Writ's own AI all move it.
+- The read tools (`writ_get_piece`, `writ_get_section`, `writ_get_research`, `writ_get_check_input`) remember, per connection, the version they showed. A write tool that replaces or decides something is **refused** when Claude has not read that step in this connection, or when the step changed after it was read (even if the other writer's lock has long expired). The message names who changed it and when, and tells Claude not to merge or overwrite, but to read it again, tell the writer what changed, and ask how to combine the two. Tools that only add (`writ_add_research`, `writ_use_research`, `writ_add_expert_answer`) need no read. A piece Claude started with `writ_start_piece` counts as read.
+- No parameter changed: the server does the remembering. A restarted server has read nothing, so the first save after a restart asks for a read.
+- A database without `step_versions` behaves as before.
+
+**Writ's own server functions** (the "Write using AI" buttons, the AI checks, research search) take the same locks, as the person who asked and from that person's tab (the web app sends its client id in the request body). They refuse before spending anything on the AI when someone else holds the lock, and check again right before writing. If the lock was taken over meanwhile, nothing is written, and the result goes back to the writer to copy.
+
+**Rule:** any new tool that writes to a step must run inside the matching helper in `src/writ.ts` (`lockedPiece` for scope, research and final; `lockedOutline`; `lockedSection`; `lockedResearchOf` when it only has research item or section ids; pass `{ append: true }` only for a tool that merely adds), and the matching read tool must call `noteReadPiece` or `noteReadSection` before it returns content. The database refuses a write that does not hold the lock. A new browser-side write goes through `useEditLock` (a step that stays open) or `withShortLock` (a one-off write from another step) in `web/src/lib/locks.ts`. A new server function that writes a guarded step must be listed in `aiLockPlan` (`supabase/functions/_shared/call-locks.ts`) or call `takeCallLocks` itself.

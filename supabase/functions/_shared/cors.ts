@@ -13,7 +13,8 @@ export function json(body: unknown, status = 200): Response {
 
 /** An error whose message is safe to show the user. */
 export class UserError extends Error {
-  constructor(message: string, public status = 400) {
+  /** `extra` is sent back beside the message (for example an edit-lock refusal carries the AI's unsaved result). */
+  constructor(message: string, public status = 400, public extra?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -25,7 +26,7 @@ export function handle(fn: (req: Request) => Promise<Response>) {
     try {
       return await fn(req);
     } catch (err) {
-      if (err instanceof UserError) return json({ error: err.message }, err.status);
+      if (err instanceof UserError) return json({ error: err.message, ...(err.extra ?? {}) }, err.status);
       console.error(err);
       return json({ error: "Something went wrong on the server. Try again." }, 500);
     }

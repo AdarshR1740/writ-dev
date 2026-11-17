@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { checkPiece, getPiece, getSection, lockedMessage, lockedOutline, lockedSection, saveOutline, saveSectionDraft, withLock, WritError } from "./writ.js";
+import { checkPiece, getPiece, getSection, lockedMessage, lockedOutline, lockedPiece, lockedResearchOf, lockedSection, saveOutline, saveSectionDraft, withLock, AI_LEASE_SECONDS, claimForRead, noteRead, WritError } from "./writ.js";
 import { CLIENT_ID } from "./client-id.js";
 
 const PIECE = "22222222-2222-4222-8222-222222222222";
@@ -286,15 +286,14 @@ function lockDb(acquire: unknown, opts: { error?: { code?: string; message: stri
 }
 
 describe("edit locks on Claude's writes", () => {
-  it("takes the lock as Claude, runs the write, and lets go", async () => {
+  it("takes the lock as Claude, runs the write, and keeps the lock for its lease", async () => {
     const { db, calls } = lockDb({ ok: true, token: "tok-1" });
+    await noteRead(db, CLIENT_ID, PIECE, [{ scope: "outline" }]);
     const r = await withLock(db, PIECE, "outline", null, async () => "saved");
     expect(r).toBe("saved");
-    expect(calls.map((c) => c.fn)).toEqual(["acquire_lock", "release_lock"]);
-    expect(calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: "outline", target_section: null, client: CLIENT_ID, kind: "ai", take_over: false });
+    expect(calls.map((c) => c.fn)).toEqual(["acquire_lock"]);
+    expect(calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: "outline", target_section: null, client: CLIENT_ID, kind: "ai", take_over: false, lease_seconds: AI_LEASE_SECONDS });
     expect(CLIENT_ID).toMatch(/^ai-/);
-    // Only this lock is let go: a slow release can never undo a newer one.
-    expect(calls[1].args).toMatchObject({ lock_token: "tok-1", client: CLIENT_ID });
   });
 
   it("writes nothing and says who is editing when someone else holds it", async () => {
@@ -306,10 +305,11 @@ describe("edit locks on Claude's writes", () => {
     expect(lockedMessage({ holder_label: "X", since: "bad" }, "outline")).toMatch(/^X is editing the outline in Writ\. Nothing was saved\./);
   });
 
-  it("lets go even when the write fails", async () => {
+  it("passes a failed write's error through", async () => {
     const { db, calls } = lockDb({ ok: true });
+    await noteRead(db, CLIENT_ID, PIECE, [{ scope: "outline" }]);
     await expect(withLock(db, PIECE, "outline", null, async () => { throw new WritError("boom"); })).rejects.toThrow("boom");
-    expect(calls.map((c) => c.fn)).toEqual(["acquire_lock", "release_lock"]);
+    expect(calls.map((c) => c.fn)).toEqual(["acquire_lock"]);
   });
 
   it("behaves as before on a Writ database that has no lock functions yet", async () => {
@@ -322,12 +322,163 @@ describe("edit locks on Claude's writes", () => {
 
   it("finds the piece for an outline or a section before locking", async () => {
     const a = lockDb({ ok: true });
+    await noteRead(a.db, CLIENT_ID, PIECE, [{ scope: "outline" }]);
     await lockedOutline(a.db, "SI-0001", async () => undefined);
     expect(a.calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: "outline" });
     const b = lockDb({ ok: true });
+    await noteRead(b.db, CLIENT_ID, PIECE, [{ scope: "section", sectionId: S2 }]);
     await lockedSection(b.db, S2, async () => undefined);
     expect(b.calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: "section", target_section: S2 });
     await expect(lockedSection(b.db, "not-an-id", async () => undefined)).rejects.toThrow(/section_id must be/);
+  });
+
+  it("locks the scope, the research and the final checks too, and says which one is busy", async () => {
+    for (const scope of ["scope", "research", "final"] as const) {
+      const a = lockDb({ ok: true });
+      await noteRead(a.db, CLIENT_ID, PIECE, [{ scope }]);
+      await lockedPiece(a.db, "SI-0001", scope, async () => undefined);
+      expect(a.calls.map((c) => c.fn)).toEqual(["acquire_lock"]);
+      expect(a.calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: scope, target_section: null, kind: "ai" });
+    }
+    const busy = { ok: false, holder_label: "Adarsh", holder_kind: "person", since: "2026-11-16T10:02:00Z", expires_at: "2026-11-16T10:05:00Z" };
+    let ran = false;
+    await expect(lockedPiece(lockDb(busy).db, "SI-0001", "scope", async () => { ran = true; })).rejects.toThrow(/Adarsh is editing the scope in Writ \(since 10:02 UTC\)\. Nothing was saved/);
+    await expect(lockedPiece(lockDb(busy).db, "SI-0001", "research", async () => { ran = true; })).rejects.toThrow(/is editing the research in Writ/);
+    await expect(lockedPiece(lockDb(busy).db, "SI-0001", "final", async () => { ran = true; })).rejects.toThrow(/is editing the final checks and sign-off in Writ/);
+    expect(ran).toBe(false);
+  });
+
+  it("finds the piece behind a research item or a section before taking the research lock", async () => {
+    const a = lockDb({ ok: true });
+    const append = { append: true };
+    await lockedResearchOf(a.db, { item: S1 }, async () => undefined, CLIENT_ID, append);
+    expect(a.calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: "research", target_section: null });
+    const b = lockDb({ ok: true });
+    await lockedResearchOf(b.db, { section: S2 }, async () => undefined, CLIENT_ID, append);
+    expect(b.calls[0].args).toMatchObject({ target_piece: PIECE, lock_scope: "research" });
+    // A batch of decisions on one piece is one lock; decisions spanning pieces are refused before anything is written.
+    const c = lockDb({ ok: true });
+    await lockedResearchOf(c.db, { items: [S1, S2] }, async () => undefined, CLIENT_ID, append);
+    expect(c.calls.filter((x) => x.fn === "acquire_lock")).toHaveLength(1);
+    let n = 0;
+    const two = { rpc: async () => ({ data: { ok: true }, error: null }), from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { piece_id: `piece-${n++}` }, error: null }) }) }) }) } as unknown as SupabaseClient;
+    await expect(lockedResearchOf(two, { items: [S1, S2] }, async () => undefined)).rejects.toThrow(/different pieces/);
+    await expect(lockedResearchOf(b.db, { item: "nope" }, async () => undefined)).rejects.toThrow(/not a research item id/);
+    await expect(lockedResearchOf(b.db, { section: "nope" }, async () => undefined)).rejects.toThrow(/section_id must be/);
+  });
+});
+
+/** A stand-in whose step versions can be moved on, as if the writer saved something. The lock is always free. */
+function versionDb() {
+  const state = { version: "2026-11-17T10:00:00+00:00", by: "Adarsh", missing: false };
+  const db = {
+    rpc: async () => ({ data: { ok: true, token: "t" }, error: null }),
+    from(table: string) {
+      const q: Record<string | symbol, unknown> = new Proxy({}, {
+        get(_t, prop) {
+          if (prop === "maybeSingle") {
+            return async () => table === "step_versions"
+              ? state.missing ? { data: null, error: { code: "42P01", message: 'relation "step_versions" does not exist' } } : { data: { version: state.version, changed_by_label: state.by }, error: null }
+              : { data: { id: PIECE, code: "SI-0001", piece_id: PIECE }, error: null };
+          }
+          return () => q;
+        },
+      });
+      return q;
+    },
+  } as unknown as SupabaseClient;
+  return { db, state };
+}
+
+describe("step versions: Claude does not save over what changed after it read", () => {
+  const read = (db: SupabaseClient, client = CLIENT_ID) => noteRead(db, client, PIECE, [{ scope: "research" }]);
+  it("refuses a save when the step has not been read in this connection", async () => {
+    const { db } = versionDb();
+    let ran = false;
+    await expect(lockedPiece(db, "SI-0001", "research", async () => { ran = true; }, "ai-never-read")).rejects.toThrow(/not read the research.*Nothing was saved/);
+    expect(ran).toBe(false);
+  });
+  it("lets a save through when nothing changed since the read, and again after its own save", async () => {
+    const { db, state } = versionDb();
+    await read(db, "ai-a");
+    await lockedPiece(db, "SI-0001", "research", async () => { state.version = "2026-11-17T10:00:05+00:00"; state.by = "Claude (for Adarsh)"; }, "ai-a");
+    await lockedPiece(db, "SI-0001", "research", async () => undefined, "ai-a");
+  });
+  it("refuses when the writer changed the step after the read, names them, and does not merge", async () => {
+    const { db, state } = versionDb();
+    await read(db, "ai-b");
+    state.version = "2026-11-17T10:12:00+00:00"; state.by = "Priya";
+    let ran = false;
+    await expect(lockedPiece(db, "SI-0001", "research", async () => { ran = true; }, "ai-b"))
+      .rejects.toThrow(/Priya changed the research at 10:12 UTC, after you last read it\. Nothing was saved\..*ask how they want the two versions combined/);
+    expect(ran).toBe(false);
+  });
+  it("lets Claude save again after it reads the changed step", async () => {
+    const { db, state } = versionDb();
+    await read(db, "ai-c");
+    state.version = "2026-11-17T10:12:00+00:00";
+    await expect(lockedPiece(db, "SI-0001", "research", async () => undefined, "ai-c")).rejects.toThrow(/changed the research/);
+    await read(db, "ai-c");
+    await lockedPiece(db, "SI-0001", "research", async () => undefined, "ai-c");
+  });
+  it("keeps each connection's reads apart", async () => {
+    const { db, state } = versionDb();
+    await read(db, "ai-d1");
+    state.version = "2026-11-17T10:12:00+00:00";
+    await read(db, "ai-d2");
+    await lockedPiece(db, "SI-0001", "research", async () => undefined, "ai-d2");
+    await expect(lockedPiece(db, "SI-0001", "research", async () => undefined, "ai-d1")).rejects.toThrow(/changed the research/);
+  });
+  it("lets an append go through without a read, and does not hide a change from the next replace", async () => {
+    const { db, state } = versionDb();
+    await lockedPiece(db, "SI-0001", "research", async () => { state.version = "2026-11-17T10:00:09+00:00"; }, "ai-e", { append: true });
+    await expect(lockedPiece(db, "SI-0001", "research", async () => undefined, "ai-e")).rejects.toThrow(/not read the research/);
+  });
+  /** A stand-in that keeps a version per step, so one write can move several steps on. */
+  function versionStore() {
+    const NIL = "00000000-0000-0000-0000-000000000000";
+    const rows = new Map<string, { version: string; changed_by_label: string }>();
+    const set = (scope: string, section: string | null, version: string, by: string) => rows.set(`${scope}|${section ?? NIL}`, { version, changed_by_label: by });
+    const db = {
+      rpc: async () => ({ data: { ok: true, token: "t" }, error: null }),
+      from(table: string) {
+        const f: Record<string, string> = {};
+        const q: Record<string | symbol, unknown> = new Proxy({}, {
+          get(_t, prop) {
+            if (prop === "eq") return (c: string, v: string) => { f[c] = v; return q; };
+            if (prop === "maybeSingle") return async () => ({ data: table === "step_versions" ? rows.get(`${f.scope}|${f.section_id}`) ?? null : { id: PIECE, code: "SI-0001", piece_id: PIECE }, error: null });
+            return () => q;
+          },
+        });
+        return q;
+      },
+    } as unknown as SupabaseClient;
+    return { db, set };
+  }
+  it("does not take Claude's own effect on a section (a heading changed by saving the outline) for someone else's change", async () => {
+    const { db, set } = versionStore();
+    set("outline", null, "v1", "Adarsh"); set("section", S1, "v1", "Adarsh");
+    await noteRead(db, "ai-h", PIECE, [{ scope: "outline" }, { scope: "section", sectionId: S1 }]);
+    await lockedOutline(db, "SI-0001", async () => { set("outline", null, "v2", "Claude (for Adarsh)"); set("section", S1, "v2", "Claude (for Adarsh)"); }, "ai-h");
+    await lockedSection(db, S1, async () => undefined, "ai-h");
+  });
+  it("still refuses a section the writer changed while Claude saved the outline", async () => {
+    const { db, set } = versionStore();
+    set("outline", null, "v1", "Adarsh"); set("section", S1, "v1", "Adarsh");
+    await noteRead(db, "ai-i", PIECE, [{ scope: "outline" }, { scope: "section", sectionId: S1 }]);
+    await lockedOutline(db, "SI-0001", async () => { set("outline", null, "v2", "Claude (for Adarsh)"); set("section", S1, "v2", "Priya"); }, "ai-i");
+    await expect(lockedSection(db, S1, async () => undefined, "ai-i")).rejects.toThrow(/Priya changed the section/);
+  });
+  it("behaves as before on a database without step versions", async () => {
+    const { db, state } = versionDb();
+    state.missing = true;
+    expect(await lockedPiece(db, "SI-0001", "research", async () => 5, "ai-f")).toBe(5);
+  });
+  it("tells Claude, when it reads a step to write it, that the writer is already in it", async () => {
+    const busy = { rpc: async () => ({ data: { ok: false, holder_label: "Priya", holder_kind: "person", since: "2026-11-17T10:02:00Z", expires_at: "x" }, error: null }) } as unknown as SupabaseClient;
+    expect(await claimForRead(busy, "ai-g", PIECE, "section", S1)).toMatch(/Priya is editing the section in Writ right now at 10:02 UTC\. Do not start drafting/);
+    const free = { rpc: async () => ({ data: { ok: true, token: "t" }, error: null }) } as unknown as SupabaseClient;
+    expect(await claimForRead(free, "ai-g", PIECE, "section", S1)).toBeNull();
   });
 });
 

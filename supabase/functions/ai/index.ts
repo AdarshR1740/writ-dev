@@ -6,6 +6,7 @@
 
 import { handle, json, UserError } from "../_shared/cors.ts";
 import { admin, requireRole, requireUser } from "../_shared/supabase.ts";
+import { aiLockPlan, callLockScope, clientOf, takeCallLocks } from "../_shared/call-locks.ts";
 import { budgetForEstimate, connect, recordUsage, runModel } from "../_shared/llm.ts";
 import { costUsd, estimateTokens, type TaskType } from "../_shared/models.ts";
 import { contextFor, loadPiece, logEvent, requireStep, setting } from "../_shared/context.ts";
@@ -205,13 +206,19 @@ const TASKS: Record<string, (userId: string, body: Record<string, unknown>) => P
   ...MEMORY_TASKS,
 };
 
-Deno.serve(handle(async (req) => {
+Deno.serve(handle((req) => callLockScope(async () => {
   const user = await requireUser(req);
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   // Read-only list of every prompt, for the prompt viewer in Settings. No model call, no cost.
   if (body.task === "prompts") {
     await requireRole(user.id, String(body.company_id ?? ""), "member");
     return json({ prompts: await promptCatalog(String(body.company_id)) });
+  }
+  // A task that writes takes the edit lock first, as the person who asked and from their tab, before it spends anything on the AI.
+  // An estimate writes nothing, so it takes none.
+  if (body.mode !== "estimate") {
+    const plan = await aiLockPlan(String(body.task ?? ""), body);
+    if (plan) await takeCallLocks(user.id, clientOf(body), plan.pieceId, plan.needs);
   }
   // Applies one accepted SEO/GEO edit to a section. No model call, no cost.
   if (body.task === "seo_fix_apply") return json(await applySeoFix(user.id, body));
@@ -234,4 +241,4 @@ Deno.serve(handle(async (req) => {
     });
   }
   return json(await prepared.run());
-}));
+})));

@@ -4,6 +4,7 @@
 
 import { UserError } from "../_shared/cors.ts";
 import { admin, requireRole } from "../_shared/supabase.ts";
+import { assertStillHeld } from "../_shared/call-locks.ts";
 import { type JsonSchema, recordUsage, runModel } from "../_shared/llm.ts";
 import type { TaskType } from "../_shared/models.ts";
 import {
@@ -76,6 +77,8 @@ function task<T>(
         taskType, system, user: user + (pre?.userSuffix ?? ""), schema, schemaName: name, maxTokens: 16000,
       });
       await recordUsage(piece.company_id, userId, name, taskType, r, piece.id);
+      // Someone may have taken the edit lock over while the model ran: then nothing is written, and the result goes back to the writer.
+      await assertStillHeld(r.data);
       return after(r.data, r.costUsd, r.model, pre?.extra);
     },
   };
